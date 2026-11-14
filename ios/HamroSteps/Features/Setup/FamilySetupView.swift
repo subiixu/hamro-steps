@@ -20,12 +20,18 @@ struct FamilySetupView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(isFirstFamily ? "Your family" : "Another family")
-                        .font(.largeTitle.bold())
-                    Text("One person starts the family and shares a code. Everyone else joins with it.")
-                        .font(.body)
-                        .foregroundStyle(.secondaryText)
+                VStack(alignment: .leading, spacing: Bento.gap) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(isFirstFamily ? "Your family" : "Another family")
+                            .font(.largeTitle.bold())
+                        Text("One person starts the family and shares a code. Everyone else joins with it.")
+                            .font(.body)
+                            .foregroundStyle(.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
 
                     choice(
                         icon: .share,
@@ -40,7 +46,8 @@ struct FamilySetupView: View {
                         step: .createName
                     )
                 }
-                .padding(24)
+                .padding(.horizontal, Bento.margin)
+                .padding(.bottom, 16)
             }
             .background(.canvas)
             .toolbar {
@@ -70,22 +77,29 @@ struct FamilySetupView: View {
         Button {
             path.append(step)
         } label: {
-            HStack(spacing: 16) {
-                icon.size(28)
-                    .foregroundStyle(.accent)
-                    .frame(width: 56, height: 56)
-                    .background(Color.accent.opacity(0.14), in: .circle)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 28) {
+                HStack(alignment: .top) {
+                    icon.size(28)
+                        .foregroundStyle(.accentText)
+                        .frame(width: 56, height: 56)
+                        .background(Color.accent.opacity(0.14), in: .circle)
+                    Spacer(minLength: 0)
+                    Icon.chevronRight.size(20).foregroundStyle(.secondaryText)
+                        .frame(width: 44, height: 44)
+                        .background(.surfaceMuted, in: .circle)
+                }
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.title2.weight(.bold)).foregroundStyle(.primary)
                     Text(detail).font(.body).foregroundStyle(.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-                Icon.chevronRight.size(20).foregroundStyle(.secondaryText)
             }
-            .padding(20)
-            .background(.surface, in: .rect(cornerRadius: 24))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Bento.padding)
+            .padding(.vertical, 4)
+            .choiceTile(selected: false, radius: Bento.radius)
         }
         .buttonStyle(.plain)
     }
@@ -99,19 +113,14 @@ struct CreateFamilyNameView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Name your family")
-                    .font(.largeTitle.bold())
-                Text("Everyone will see this at the top of their screen.")
-                    .font(.body)
-                    .foregroundStyle(.secondaryText)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                SetupHeading(step: 1, title: "Name your family", detail: "Everyone will see this at the top of their screen.")
                 TextField("Thapa Family", text: $name)
                     .font(.title2)
                     .textInputAutocapitalization(.words)
                     .submitLabel(.next)
                     .focused($focused)
-                    .padding(16)
-                    .background(.surface, in: .rect(cornerRadius: 16))
+                    .fieldTile()
                     .onSubmit(next)
                     .onChange(of: name) { _, value in
                         if value.count > FamilyRules.nameLength.upperBound {
@@ -119,11 +128,13 @@ struct CreateFamilyNameView: View {
                         }
                     }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
         }
         .safeAreaInset(edge: .bottom) {
             PrimaryButton(title: "Next", isEnabled: FamilyRules.isValidName(name), action: next)
-                .padding(24)
+                .padding(.horizontal, Bento.margin)
+                .padding(.vertical, 16)
+                .background(.canvas)
         }
         .background(.canvas)
         .onAppear { focused = true }
@@ -156,16 +167,13 @@ struct CreateGoalView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Pick a daily goal")
-                    .font(.largeTitle.bold())
-                Text("Everyone's steps add up to this one number each day. You can change it later.")
-                    .font(.body)
-                    .foregroundStyle(.secondaryText)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                SetupHeading(step: 2, title: "Pick a daily goal", detail: "Everyone's steps add up to this one number each day. You can change it later.")
                 GoalPicker(goal: $goal)
                 if let message { Notice(text: message) }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.bottom, 8)
         }
         .safeAreaInset(edge: .bottom) {
             Group {
@@ -175,7 +183,8 @@ struct CreateGoalView: View {
                     PrimaryButton(title: "Create family", action: create)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
         .background(.canvas)
@@ -204,7 +213,7 @@ struct GoalPicker: View {
     private let step = 5_000
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: Bento.gap) {
             Group {
                 if typeSize.isAccessibilitySize {
                     // Large text: the number gets the full width, buttons below.
@@ -224,8 +233,8 @@ struct GoalPicker: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(20)
-            .background(.surface, in: .rect(cornerRadius: 24))
+            .padding(Bento.padding)
+            .bentoSurface()
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("Daily goal"))
             .accessibilityValue(Text(StepFormatter.withUnit(goal)))
@@ -237,27 +246,39 @@ struct GoalPicker: View {
                 }
             }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Bento.gap), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: Bento.gap) {
                 ForEach(FamilyRules.goalPresets, id: \.self) { preset in
+                    let selected = goal == preset
                     Button {
                         withAnimation { goal = preset }
                     } label: {
-                        VStack(spacing: 2) {
-                            Text(StepFormatter.count(preset))
-                                .font(.title3.weight(.semibold))
-                                .monospacedDigit()
-                            if preset == FamilyRules.suggestedGoal {
-                                Text("Suggested").font(.footnote)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(StepFormatter.count(preset))
+                                    .font(.title3.weight(.semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(selected ? Color.accentText : Color.primary)
+                                Spacer(minLength: 4)
+                                if selected {
+                                    Icon.check.size(18)
+                                        .foregroundStyle(.accentText)
+                                        .accessibilityHidden(true)
+                                }
                             }
+                            // Every tile keeps the line, so the grid stays even.
+                            Text("Suggested")
+                                .font(.footnote)
+                                .foregroundStyle(.secondaryText)
+                                .opacity(preset == FamilyRules.suggestedGoal ? 1 : 0)
+                                .accessibilityHidden(preset != FamilyRules.suggestedGoal)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .padding(.vertical, 6)
-                        // Canvas on accentText passes AA in both appearances.
-                        .foregroundStyle(goal == preset ? Color.canvas : Color.primary)
-                        .background(goal == preset ? Color.accentText : Color.surface, in: .rect(cornerRadius: 16))
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .padding(.horizontal, Bento.smallPadding)
+                        .padding(.vertical, 14)
+                        .choiceTile(selected: selected)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityAddTraits(goal == preset ? .isSelected : [])
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
         }
@@ -283,10 +304,12 @@ struct GoalPicker: View {
             change(by: amount)
         } label: {
             icon.size(22)
+                .foregroundStyle(.primary)
                 .frame(width: 52, height: 52)
-                .background(.surfaceMuted, in: .circle)
+                .contentShape(.circle)
         }
         .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
         .disabled(amount < 0 ? goal <= FamilyRules.goalRange.lowerBound : goal >= FamilyRules.goalRange.upperBound)
         .accessibilityHidden(true)
     }
@@ -294,6 +317,31 @@ struct GoalPicker: View {
     private func change(by amount: Int) {
         let next = (goal + amount) / 1_000 * 1_000
         withAnimation { goal = min(max(next, FamilyRules.goalRange.lowerBound), FamilyRules.goalRange.upperBound) }
+    }
+}
+
+/// The top of a setup or edit screen: optional "Step N of 2", the title,
+/// and one line under it.
+struct SetupHeading: View {
+    var step: Int?
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let step { StepCount(step: step, total: 2) }
+            Text(title)
+                .font(.largeTitle.bold())
+                .fixedSize(horizontal: false, vertical: true)
+            Text(detail)
+                .font(.body)
+                .foregroundStyle(.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
     }
 }
 

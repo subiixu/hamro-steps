@@ -107,6 +107,10 @@ struct PrimaryButton: View {
         Button(action: action) {
             Text(title)
                 .font(.title3.weight(.semibold))
+                // One line even at the largest sizes, so the bottom bar
+                // leaves room for the screen above it.
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
         }
@@ -223,5 +227,118 @@ struct AvatarStack: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// An input (a text field, the goal stepper) on its own white tile.
+    func fieldTile() -> some View {
+        padding(.horizontal, Bento.smallPadding)
+            .padding(.vertical, 16)
+            .bentoSurface(radius: Bento.smallRadius)
+    }
+
+    /// A tappable choice tile: white, with an accent border when selected.
+    func choiceTile(selected: Bool, radius: CGFloat = Bento.smallRadius) -> some View {
+        bentoSurface(radius: radius)
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(.accent, lineWidth: 2)
+                }
+            }
+            .contentShape(.rect(cornerRadius: radius, style: .continuous))
+    }
+}
+
+/// The full-width quiet button under a primary one ("Not now", "Done").
+struct SecondaryButton: View {
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        // Neutral text: the accent tint would fall below AA on glass.
+        .tint(.primary)
+    }
+}
+
+/// "Step 1 of 2" above a setup screen's title.
+struct StepCount: View {
+    let step: Int
+    let total: Int
+
+    var body: some View {
+        Text("Step \(step) of \(total)")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.accentText)
+    }
+}
+
+/// A row inside a tile: leading icon, title, optional value, chevron.
+/// Several of these stack in one tile with `TileDivider`s between them.
+struct TileRow: View {
+    let icon: Icon
+    let title: LocalizedStringKey
+    var value: String?
+    var showsChevron = true
+    /// An action ("Share invite", "Leave"): accent title, no chevron.
+    var isAction = false
+    /// Delete account: system red, the standard iOS cue for removing data.
+    var isDestructive = false
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 22
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        HStack(spacing: 14) {
+            icon.size(iconSize)
+                .foregroundStyle(isDestructive ? Color.red : Color.accentText)
+            if typeSize.isAccessibilitySize, let value {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(titleStyle)
+                    Text(value).foregroundStyle(.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(title)
+                    .foregroundStyle(titleStyle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let value {
+                    Text(value).foregroundStyle(.secondaryText)
+                }
+            }
+            if showsChevron && !isAction {
+                Icon.chevronRight.size(14)
+                    .foregroundStyle(.secondaryText)
+                    .accessibilityHidden(true)
+            }
+        }
+        .font(isAction ? .body.weight(.semibold) : .body)
+        .padding(.vertical, 14)
+        .frame(minHeight: 44)
+        .contentShape(.rect)
+    }
+
+    private var titleStyle: Color { isDestructive ? .red : isAction ? .accentText : .primary }
+}
+
+/// The hairline between rows inside a tile.
+struct TileDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Bento.edge)
+            .frame(height: 1)
     }
 }

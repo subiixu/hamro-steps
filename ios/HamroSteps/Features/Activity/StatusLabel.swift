@@ -17,7 +17,7 @@ struct StatusLabel: View {
                     .lineLimit(1)
             }
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.secondaryText)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(Text("Status: \(text)"))
         }

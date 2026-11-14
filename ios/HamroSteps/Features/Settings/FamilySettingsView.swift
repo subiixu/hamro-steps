@@ -19,21 +19,23 @@ struct FamilySettingsView: View {
     private var isOrganiser: Bool { home.isOrganiser(session.user?.id) }
     private var organiserName: String? { home.members.first(where: \.isOrganiser)?.name }
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
         NavigationStack {
-            List {
-                if let message {
-                    Section { Notice(text: message).listRowInsets(EdgeInsets()) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: Bento.gap) {
+                    if let message { Notice(text: message) }
+                    if let family {
+                        familyTile(family)
+                        if isOrganiser { inviteTile(family) }
+                        peopleTile(family)
+                        leaveTile(family)
+                    }
                 }
-                if let family {
-                    familySection(family)
-                    if isOrganiser { inviteSection(family) }
-                    membersSection(family)
-                    leaveSection(family)
-                }
+                .padding(.horizontal, Bento.margin)
+                .padding(.vertical, 8)
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
             .background(.canvas)
             .tint(.accentText)
             .navigationTitle("Family settings")
@@ -50,86 +52,68 @@ struct FamilySettingsView: View {
         }
     }
 
-    // MARK: Sections
+    // MARK: Tiles
 
-    private func familySection(_ family: FamilySummary) -> some View {
-        Section {
-            LabeledContent("Name", value: family.name)
-            LabeledContent("Daily goal", value: StepFormatter.withUnit(family.dailyGoal))
-            if isOrganiser {
-                NavigationLink {
-                    EditFamilyView(family: family)
-                } label: {
-                    Label { Text("Change name or goal") } icon: { Icon.edit.image }
-                }
-            }
-        } header: {
-            Text("Family").foregroundStyle(.secondaryText)
-        } footer: {
-            if !isOrganiser, let organiserName {
-                Text("Only \(organiserName), the organiser, can change these.").foregroundStyle(.secondaryText)
-            }
-        }
-    }
-
-    private func inviteSection(_ family: FamilySummary) -> some View {
-        Section {
-            // Embedded: the list row is the card, so the code, Share and
-            // New code read as one rounded group with full-width dividers.
-            InviteCodeCard(family: family, embedded: true)
-                .listRowInsets(EdgeInsets())
-                .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-            ShareLink(item: InviteMessage.text(familyName: family.name, code: family.inviteCode)) {
-                Label { Text("Share invite") } icon: { Icon.share.image }
-            }
-            Button {
-                confirmRegenerate = true
-            } label: {
-                Label { Text("Get a new code") } icon: { Icon.refresh.image }
-            }
-            .confirmationDialog("Get a new code?", isPresented: $confirmRegenerate, titleVisibility: .visible) {
-                Button("Get a new code") { run { _ = try await service.regenerateInviteCode(familyId: family.id) } }
-            } message: {
-                Text("The old code will stop working. People already in the family stay in it.")
-            }
-        } header: {
-            Text("Invite code").foregroundStyle(.secondaryText)
-        } footer: {
-            Text("Up to \(FamilyRules.maxMembers) people can be in a family.").foregroundStyle(.secondaryText)
-        }
-    }
-
-    private func membersSection(_ family: FamilySummary) -> some View {
-        Section {
-            ForEach(home.members) { member in
-                HStack(spacing: 14) {
-                    Avatar(name: member.name, hex: member.avatarColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(member.userId == session.user?.id ? String(localized: "\(member.name) (you)") : member.name)
-                            .font(.body.weight(.semibold))
-                        if member.isOrganiser {
-                            Text("Organiser").font(.footnote).foregroundStyle(.secondaryText)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    if isOrganiser && member.userId != session.user?.id {
-                        Button {
-                            memberToRemove = member
+    private func familyTile(_ family: FamilySummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Card(title: "Family", icon: .home) {
+                VStack(alignment: .leading, spacing: 0) {
+                    fact("Name", family.name)
+                    TileDivider()
+                    fact("Daily goal", StepFormatter.withUnit(family.dailyGoal))
+                    if isOrganiser {
+                        TileDivider()
+                        NavigationLink {
+                            EditFamilyView(family: family)
                         } label: {
-                            Label { Text("Remove") } icon: { Icon.userRemove.size(20) }
-                                .labelStyle(.titleAndIcon)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.accentText)
-                                .frame(minHeight: 44)
+                            TileRow(icon: .edit, title: "Change name or goal")
                         }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(Text("Remove \(member.name)"))
+                        .buttonStyle(.plain)
                     }
                 }
-                .accessibilityElement(children: .combine)
             }
-        } header: {
-            Text("People").foregroundStyle(.secondaryText)
+            if !isOrganiser, let organiserName {
+                footer(Text("Only \(organiserName), the organiser, can change these."))
+            }
+        }
+    }
+
+    private func inviteTile(_ family: FamilySummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Card(title: "Invite code", icon: .share) {
+                VStack(alignment: .leading, spacing: 0) {
+                    InviteCodeCard(family: family, embedded: true)
+                    TileDivider()
+                    ShareLink(item: InviteMessage.text(familyName: family.name, code: family.inviteCode)) {
+                        TileRow(icon: .share, title: "Share invite", isAction: true)
+                    }
+                    .buttonStyle(.plain)
+                    TileDivider()
+                    Button {
+                        confirmRegenerate = true
+                    } label: {
+                        TileRow(icon: .refresh, title: "Get a new code", isAction: true)
+                    }
+                    .buttonStyle(.plain)
+                    .confirmationDialog("Get a new code?", isPresented: $confirmRegenerate, titleVisibility: .visible) {
+                        Button("Get a new code") { run { _ = try await service.regenerateInviteCode(familyId: family.id) } }
+                    } message: {
+                        Text("The old code will stop working. People already in the family stay in it.")
+                    }
+                }
+            }
+            footer(Text("Up to \(FamilyRules.maxMembers) people can be in a family."))
+        }
+    }
+
+    private func peopleTile(_ family: FamilySummary) -> some View {
+        Card(title: "People", icon: .family) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(home.members.enumerated()), id: \.element.id) { index, member in
+                    if index > 0 { TileDivider() }
+                    memberRow(member)
+                }
+            }
         }
         .confirmationDialog(
             Text("Remove \(memberToRemove?.name ?? "")?"),
@@ -145,21 +129,93 @@ struct FamilySettingsView: View {
         }
     }
 
-    private func leaveSection(_ family: FamilySummary) -> some View {
-        Section {
+    private func memberRow(_ member: FamilyMember) -> some View {
+        let canRemove = isOrganiser && member.userId != session.user?.id
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 14))
+        return layout {
+            HStack(spacing: 14) {
+                Avatar(name: member.name, hex: member.avatarColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(member.userId == session.user?.id ? String(localized: "\(member.name) (you)") : member.name)
+                        .font(.body.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if member.isOrganiser {
+                        Text("Organiser").font(.footnote).foregroundStyle(.secondaryText)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            if canRemove {
+                Button {
+                    memberToRemove = member
+                } label: {
+                    Label { Text("Remove") } icon: { Icon.userRemove.size(18) }
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.accentText)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(.surfaceMuted, in: .capsule)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Remove \(member.name)"))
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func leaveTile(_ family: FamilySummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 confirmLeave = true
             } label: {
-                Label { Text("Leave \(family.name)") } icon: { Icon.logout.image }
+                TileRow(icon: .logout, title: "Leave \(family.name)", isAction: true)
+                    .padding(.horizontal, Bento.padding)
+                    .padding(.vertical, 2)
+                    .bentoSurface()
             }
+            .buttonStyle(.plain)
             .confirmationDialog("Leave \(family.name)?", isPresented: $confirmLeave, titleVisibility: .visible) {
                 Button("Leave family", role: .destructive) { leave(family) }
             } message: {
                 Text(leaveMessage)
             }
-        } footer: {
-            Text("Leaving removes your steps from this family. You can join again with the code.").foregroundStyle(.secondaryText)
+            footer(Text("Leaving removes your steps from this family. You can join again with the code."))
         }
+    }
+
+    /// "Name   Thapa Family": a fact row; stacks at accessibility sizes.
+    private func fact(_ label: LocalizedStringKey, _ value: String) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
+        return layout {
+            Text(label)
+                .foregroundStyle(.primary)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Text(value)
+                .foregroundStyle(.secondaryText)
+                .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.body)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Quiet text under a tile, like a list footer.
+    private func footer(_ text: Text) -> some View {
+        text
+            .font(.footnote)
+            .foregroundStyle(.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 4)
     }
 
     private var leaveMessage: String {
@@ -215,21 +271,27 @@ struct EditFamilyView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Family name").font(.headline)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                TileLabel("Family name", icon: .home)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 8)
                 TextField("Family name", text: $name)
                     .font(.title3)
                     .textInputAutocapitalization(.words)
-                    .padding(16)
-                    .background(.surface, in: .rect(cornerRadius: 16))
-                Text("Daily goal").font(.headline).padding(.top, 8)
+                    .fieldTile()
+                TileLabel("Daily goal", icon: .goal)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 12)
                 GoalPicker(goal: $goal)
                 Text("A new goal counts from today. Earlier days keep the goal they had.")
                     .font(.footnote)
                     .foregroundStyle(.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
                 if let message { Notice(text: message) }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.bottom, 8)
         }
         .background(.canvas)
         .navigationTitle("Change name or goal")
@@ -242,7 +304,8 @@ struct EditFamilyView: View {
                     PrimaryButton(title: "Save", isEnabled: FamilyRules.isValidName(name), action: save)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
     }

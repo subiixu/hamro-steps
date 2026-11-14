@@ -9,33 +9,30 @@ struct InviteCodeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Invite your family")
-                    .font(.largeTitle.bold())
-                Text("Send this code to everyone in \(family.name). They install Hamro Steps and type it in.")
-                    .font(.body)
-                    .foregroundStyle(.secondaryText)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                SetupHeading(title: "Invite your family", detail: "Send this code to everyone in \(family.name). They install Hamro Steps and type it in.")
                 InviteCodeCard(family: family)
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
         }
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 ShareLink(item: InviteMessage.text(familyName: family.name, code: family.inviteCode)) {
                     Label { Text("Share invite") } icon: { Icon.share.image }
                         .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
                 .controlSize(.large)
 
-                Button("Done", action: onDone)
-                    .font(.title3.weight(.semibold))
-                    .padding(.vertical, 6)
+                SecondaryButton(title: "Done", action: onDone)
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
         .background(.canvas)
@@ -46,7 +43,7 @@ struct InviteCodeView: View {
 /// The code itself, big enough to read out over a phone call, with Copy.
 struct InviteCodeCard: View {
     let family: FamilySummary
-    /// Inside a List row, which already draws the rounded surface.
+    /// Inside another tile (Family settings), which already draws the surface.
     var embedded = false
     @State private var copied = false
 
@@ -68,14 +65,17 @@ struct InviteCodeCard: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.accentText)
             }
-            .buttonStyle(.bordered)
-            .tint(.accentText)
+            .buttonStyle(.glass)
             .buttonBorderShape(.capsule)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-        .background(embedded ? Color.clear : Color.surface, in: .rect(cornerRadius: 24))
+        .padding(.vertical, embedded ? 8 : 28)
+        .padding(.horizontal, embedded ? 0 : 16)
+        .background {
+            if !embedded {
+                Color.clear.bentoSurface()
+            }
+        }
     }
 }
 

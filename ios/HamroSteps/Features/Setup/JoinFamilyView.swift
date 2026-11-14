@@ -21,12 +21,8 @@ struct JoinFamilyView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Join your family")
-                    .font(.largeTitle.bold())
-                Text("Type the code from the invite message, or paste it.")
-                    .font(.body)
-                    .foregroundStyle(.secondaryText)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                SetupHeading(title: "Join your family", detail: "Type the code from the invite message, or paste it.")
 
                 TextField("ABC 123", text: $code)
                     .font(.system(.largeTitle, design: .monospaced, weight: .bold))
@@ -36,8 +32,8 @@ struct JoinFamilyView: View {
                     .keyboardType(.asciiCapable)
                     .submitLabel(.join)
                     .focused($focused)
-                    .padding(.vertical, 20)
-                    .background(.surface, in: .rect(cornerRadius: 20))
+                    .padding(.vertical, 8)
+                    .fieldTile()
                     .onSubmit(join)
                     .accessibilityLabel("Family code")
 
@@ -55,6 +51,7 @@ struct JoinFamilyView: View {
                 .buttonBorderShape(.capsule)
                 .tint(.accentText)
                 .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
 
                 if isChecking {
                     OrbLoader(activity: .joining, compact: true)
@@ -64,7 +61,8 @@ struct JoinFamilyView: View {
                 }
                 if let message { Notice(text: message) }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.bottom, 8)
         }
         .safeAreaInset(edge: .bottom) {
             Group {
@@ -74,7 +72,8 @@ struct JoinFamilyView: View {
                     PrimaryButton(title: "Join family", isEnabled: canJoin, action: join)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
         .background(.canvas)
@@ -85,9 +84,10 @@ struct JoinFamilyView: View {
     private func previewCard(_ preview: InvitePreview) -> some View {
         HStack(spacing: 16) {
             Icon.family.size(28)
-                .foregroundStyle(.accent)
+                .foregroundStyle(.accentText)
                 .frame(width: 56, height: 56)
                 .background(Color.accent.opacity(0.14), in: .circle)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(preview.name).font(.title3.weight(.semibold))
                 Text(preview.alreadyMember
@@ -101,8 +101,8 @@ struct JoinFamilyView: View {
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(20)
-        .background(.surface, in: .rect(cornerRadius: 24))
+        .padding(Bento.padding)
+        .bentoSurface()
         .accessibilityElement(children: .combine)
     }
 

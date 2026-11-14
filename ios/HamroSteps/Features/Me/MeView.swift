@@ -5,126 +5,169 @@ struct MeView: View {
     @Environment(SessionStore.self) private var session
     @Environment(StepSync.self) private var stepSync
     @State private var confirmSignOut = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         NavigationStack {
-            List {
-                // Same custom title as Home (no navigation bar), so the two
-                // tabs start at the same height.
-                Text("Me")
-                    .font(.largeTitle.bold())
-                    .accessibilityAddTraits(.isHeader)
-                    .listRowInsets(EdgeInsets(top: 12, leading: 4, bottom: 0, trailing: 4))
-                    .listRowBackground(Color.clear)
-                    .listSectionSpacing(12)
-                Section {
-                    HStack(spacing: 16) {
-                        Avatar(name: session.user?.displayName ?? "", hex: session.user?.avatarColor ?? "")
-                        Text(session.user?.displayName ?? "")
-                            .font(.title2.bold())
-                    }
-                    .padding(.vertical, 6)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: Bento.gap) {
+                    // Same custom title as Home (no navigation bar), so the two
+                    // tabs start at the same height.
+                    Text("Me")
+                        .font(.largeTitle.bold())
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.horizontal, 4)
+                        .padding(.top, 12)
 
-                Section {
-                    healthStatus
-                } header: {
-                    Text("Apple Health").foregroundStyle(.secondaryText)
-                } footer: {
-                    if stepSync.isHealthAvailable && stepSync.healthRequested {
-                        Text("Steps not showing? Open the Health app, tap your picture, then Apps › Hamro Steps, and turn on Steps.")
-                            .foregroundStyle(.secondaryText)
-                    }
-                }
+                    profileTile
+                    healthTile
 
-                Section {
-                    NavigationLink {
-                        NotificationsScreen()
-                    } label: {
-                        Label { Text("Notifications") } icon: { Icon.notification.image }
-                    }
-                    Link(destination: URL(string: "https://subiixu.github.io/hamro-steps/privacy/")!) {
-                        Label { Text("Privacy policy") } icon: { Icon.health.image }
-                    }
-                    .foregroundStyle(.primary)
-                }
-
-                Section {
-                    Button {
-                        confirmSignOut = true
-                    } label: {
-                        Label { Text("Sign out") } icon: { Icon.logout.image }
-                    }
-                    .confirmationDialog("Sign out of Hamro Steps?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-                        Button("Sign out") {
-                            Task {
-                                await session.signOut()
-                                stepSync.reset()
-                            }
+                    rows {
+                        NavigationLink {
+                            NotificationsScreen()
+                        } label: {
+                            TileRow(icon: .notification, title: "Notifications")
                         }
-                    } message: {
-                        Text("Your family keeps your steps so far. Sign in again with Apple any time.")
+                        .buttonStyle(.plain)
+                        TileDivider()
+                        Link(destination: URL(string: "https://subiixu.github.io/hamro-steps/privacy/")!) {
+                            TileRow(icon: .health, title: "Privacy policy")
+                        }
+                        .buttonStyle(.plain)
                     }
 
-                    NavigationLink {
-                        DeleteAccountView()
-                    } label: {
-                        // System destructive red: the standard iOS cue for
-                        // an action that removes data (allowed by the brief).
-                        Label { Text("Delete account") } icon: { Icon.delete.image }
-                            .foregroundStyle(.red)
+                    rows {
+                        Button {
+                            confirmSignOut = true
+                        } label: {
+                            TileRow(icon: .logout, title: "Sign out", showsChevron: false)
+                        }
+                        .buttonStyle(.plain)
+                        .confirmationDialog("Sign out of Hamro Steps?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+                            Button("Sign out") {
+                                Task {
+                                    await session.signOut()
+                                    stepSync.reset()
+                                }
+                            }
+                        } message: {
+                            Text("Your family keeps your steps so far. Sign in again with Apple any time.")
+                        }
+                        TileDivider()
+                        NavigationLink {
+                            DeleteAccountView()
+                        } label: {
+                            TileRow(icon: .delete, title: "Delete account", isDestructive: true)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, Bento.margin)
+                .padding(.bottom, 16)
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
             .background(.canvas)
             .tint(.accentText)
-            .contentMargins(.top, 0, for: .scrollContent)
-            .listSectionSpacing(.compact)
             .toolbarVisibility(.hidden, for: .navigationBar)
             .task { await stepSync.refreshHealthStatus() }
+        }
+    }
+
+    private var profileTile: some View {
+        HStack(spacing: 16) {
+            Avatar(name: session.user?.displayName ?? "", hex: session.user?.avatarColor ?? "", size: 64)
+            Text(session.user?.displayName ?? "")
+                .font(.title2.bold())
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Bento.padding)
+        .bentoSurface()
+    }
+
+    /// Rows grouped on one white tile.
+    private func rows(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            content()
+        }
+        .padding(.horizontal, Bento.padding)
+        .padding(.vertical, 4)
+        .bentoSurface()
+    }
+
+    private var healthTile: some View {
+        Card(title: "Apple Health", icon: .health) {
+            healthStatus
+            if stepSync.isHealthAvailable && stepSync.healthRequested {
+                Text("Steps not showing? Open the Health app, tap your picture, then Apps › Hamro Steps, and turn on Steps.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     @ViewBuilder
     private var healthStatus: some View {
         if !stepSync.isHealthAvailable {
-            Label { Text("Apple Health isn't available on this iPhone.") } icon: { Icon.health.image }
+            Text("Apple Health isn't available on this iPhone.")
+                .fixedSize(horizontal: false, vertical: true)
         } else if stepSync.healthRequested {
             // The request status only says the sheet was shown, not that
             // access was granted (Health hides a denial). So "Reading steps"
             // needs real data: a sync only records a time when it read
             // non-zero steps. Otherwise stay neutral.
-            VStack(alignment: .leading, spacing: 4) {
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+            layout {
                 if let last = stepSync.lastSyncedAt {
-                    Label { Text("Reading steps").font(.body.weight(.semibold)) } icon: { Icon.health.image.foregroundStyle(.goal) }
-                    Text("Steps last sent \(last, format: .relative(presentation: .named))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondaryText)
+                    miniTile(icon: .health, iconStyle: .goalText) {
+                        Text("Reading steps").font(.body.weight(.semibold))
+                    }
+                    miniTile(icon: .clock, iconStyle: .secondaryText) {
+                        Text("Steps last sent \(last, format: .relative(presentation: .named))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondaryText)
+                    }
                 } else {
-                    Label { Text("Permission asked").font(.body.weight(.semibold)) } icon: { Icon.health.image }
-                    Text("No steps read yet. If you walked today and nothing shows, check the steps below.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondaryText)
+                    miniTile(icon: .health, iconStyle: .accentText) {
+                        Text("Permission asked").font(.body.weight(.semibold))
+                    }
+                    miniTile(icon: .clock, iconStyle: .secondaryText) {
+                        Text("No steps read yet. If you walked today and nothing shows, check the steps below.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondaryText)
+                    }
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 4)
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("Hamro Steps can't see your steps yet, so they aren't counting for your family.")
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
                     Task { await stepSync.connectHealth() }
                 } label: {
                     Label { Text("Connect Apple Health") } icon: { Icon.health.image }
+                        .font(.body.weight(.semibold))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
             }
-            .padding(.vertical, 6)
         }
+    }
+
+    /// A small grey tile inside the Apple Health tile.
+    private func miniTile(icon: Icon, iconStyle: Color, @ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            icon.size(20).foregroundStyle(iconStyle)
+                .accessibilityHidden(true)
+            content()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(14)
+        .background(.surfaceMuted, in: .rect(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -139,23 +182,32 @@ struct DeleteAccountView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: Bento.gap) {
                 Text("Delete your account?")
                     .font(.largeTitle.bold())
-                Text("This removes everything Hamro Steps has about you:")
-                    .font(.body)
-                VStack(alignment: .leading, spacing: 12) {
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 8)
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("This removes everything Hamro Steps has about you:")
+                        .font(.body.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                     item("Your name and sign-in")
                     item("Your step totals")
                     item("Your place in every family you're in")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Bento.padding)
+                .bentoSurface()
                 Text("Your families carry on without you. If you organise a family, the next person in it takes over. The steps in Apple Health stay on your iPhone.")
                     .font(.body)
                     .foregroundStyle(.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
                 if let message { Notice(text: message) }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.bottom, 8)
         }
         .background(.canvas)
         .navigationBarTitleDisplayMode(.inline)
@@ -169,15 +221,19 @@ struct DeleteAccountView: View {
                     } label: {
                         Text("Delete my account")
                             .font(.title3.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
                     .controlSize(.large)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
         .confirmationDialog("This can't be undone", isPresented: $confirm, titleVisibility: .visible) {
@@ -190,7 +246,9 @@ struct DeleteAccountView: View {
     private func item(_ text: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Icon.delete.size(20).foregroundStyle(.secondaryText).padding(.top, 2)
+                .accessibilityHidden(true)
             Text(text).font(.body)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

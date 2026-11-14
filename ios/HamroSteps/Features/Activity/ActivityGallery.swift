@@ -114,7 +114,7 @@ private struct GallerySection<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.secondaryText)
                 .textCase(.uppercase)
             content
         }
@@ -179,14 +179,14 @@ private struct GalleryMembersPage: View {
                         ForEach(members) { member in
                             row(member)
                                 .padding(.vertical, 12)
-                            if member.id != members.last?.id { Divider() }
+                            if member.id != members.last?.id { TileDivider() }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .background(.surface, in: .rect(cornerRadius: 24))
+                    .padding(.horizontal, Bento.padding)
+                    .bentoSurface()
                 }
-                GallerySection(title: "Badge on its own") {
-                    WalkingBadge()
+                GallerySection(title: "Walking dot on its own") {
+                    WalkingDot()
                 }
             }
             .padding(20)
@@ -202,11 +202,18 @@ private struct GalleryMembersPage: View {
     private func row(_ member: Member) -> some View {
         HStack(alignment: .top, spacing: 12) {
             ActivityAvatar(content: .member(member.actor), size: 44)
+                .overlay(alignment: .bottomTrailing) {
+                    if member.walking { WalkingDot().offset(x: 4, y: 4) }
+                }
             VStack(alignment: .leading, spacing: 4) {
                 Text(member.actor.name).font(.headline)
                 if typeSize.isAccessibilitySize { steps(member) }
                 StatusLabel(status: member.status)
-                if member.walking { WalkingBadge() }
+                if member.walking {
+                    Text("Walking now")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.accentText)
+                }
             }
             Spacer(minLength: 8)
             if !typeSize.isAccessibilitySize { steps(member) }
@@ -231,7 +238,7 @@ private struct GalleryStatusPage: View {
             VStack(alignment: .leading, spacing: 20) {
                 GallerySection(title: "My status") {
                     if status == nil {
-                        Text("No status").foregroundStyle(.secondary)
+                        Text("No status").foregroundStyle(.secondaryText)
                     }
                     StatusLabel(status: status)
                 }

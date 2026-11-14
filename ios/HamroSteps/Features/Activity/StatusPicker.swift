@@ -15,6 +15,7 @@ struct StatusPicker: View {
     @State private var isSaving = false
     @State private var problem: LocalizedStringKey?
     @FocusState private var textFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     init(current: MemberStatus?,
          onSave: @escaping (StatusInput) async throws -> Void,
@@ -34,20 +35,22 @@ struct StatusPicker: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     presets
                     customText
                     expiryChoices
                     if let problem {
                         Text(problem)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if current?.isActive(at: .now) == true {
                         clearButton
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, Bento.margin)
+                .padding(.vertical, 8)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(.canvas)
@@ -66,67 +69,67 @@ struct StatusPicker: View {
 
     private var presets: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("What are you up to?")
-                .font(.headline)
-            VStack(spacing: 0) {
+            sectionLabel("What are you up to?")
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: typeSize.isAccessibilitySize ? 1 : 2),
+                spacing: 10
+            ) {
                 ForEach(StatusPreset.allCases) { option in
+                    let selected = preset == option
                     Button {
                         preset = option
                         text = ""
                         textFocused = false
                         problem = nil
                     } label: {
-                        HStack(spacing: 14) {
-                            option.icon.size(24)
-                                .foregroundStyle(.accent)
-                            Text(option.label)
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                            Spacer(minLength: 8)
-                            if preset == option {
-                                Icon.check.size(22)
-                                    .foregroundStyle(.accent)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top) {
+                                option.icon.size(24)
+                                    .foregroundStyle(.accentText)
+                                Spacer(minLength: 4)
+                                if selected {
+                                    Icon.check.size(20)
+                                        .foregroundStyle(.accentText)
+                                }
                             }
+                            .accessibilityHidden(true)
+                            Text(option.label)
+                                .font(.body.weight(selected ? .semibold : .regular))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 56)
-                        .contentShape(.rect)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .choiceTile(selected: selected, radius: 20)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityAddTraits(preset == option ? .isSelected : [])
-                    if option != StatusPreset.allCases.last {
-                        Divider().padding(.leading, 54)
-                    }
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
-            .background(.surface, in: .rect(cornerRadius: 20))
         }
     }
 
     private var customText: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Or write your own")
-                .font(.headline)
+            sectionLabel("Or write your own")
             HStack(spacing: 12) {
                 Icon.statusCustom.size(24)
-                    .foregroundStyle(.accent)
+                    .foregroundStyle(.accentText)
+                    .accessibilityHidden(true)
                 TextField("For example: Visiting Pokhara", text: $text)
                     .focused($textFocused)
                     .submitLabel(.done)
             }
             .padding(.horizontal, 16)
             .frame(minHeight: 56)
-            .background(.surface, in: .rect(cornerRadius: 20))
-            .overlay {
-                if !text.isEmpty {
-                    RoundedRectangle(cornerRadius: 20).strokeBorder(.accent, lineWidth: 2)
-                }
-            }
+            .choiceTile(selected: !text.isEmpty, radius: 20)
             Text("\(StatusInput.length(of: text))/\(StatusInput.maxTextLength)")
                 .font(.footnote)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.secondaryText)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 4)
                 .accessibilityLabel(Text("\(StatusInput.length(of: text)) of \(StatusInput.maxTextLength) characters used"))
         }
         .onChange(of: text) { _, new in
@@ -137,23 +140,36 @@ struct StatusPicker: View {
         }
     }
 
+    private func sectionLabel(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.headline)
+            .padding(.horizontal, 4)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private var expiryChoices: some View {
         TimelineView(.everyMinute) { context in
             let options = StatusExpiry.available(at: context.date)
             VStack(alignment: .leading, spacing: 10) {
-                Text("Clear it after")
-                    .font(.headline)
+                sectionLabel("Clear it after")
                 ActivityWrapLayout(spacing: 8) {
                     ForEach(options) { option in
                         Button {
                             expiry = option
                         } label: {
+                            // White on accentText passes AA; on accent it doesn't.
                             Text(option.label)
                                 .font(.body.weight(expiry == option ? .semibold : .regular))
                                 .padding(.horizontal, 16)
                                 .frame(minHeight: 44)
                                 .foregroundStyle(expiry == option ? Color.white : Color.primary)
-                                .background(expiry == option ? Color.accent : Color.surface, in: .capsule)
+                                .background(expiry == option ? Color.accentText : Color.surface, in: .capsule)
+                                .overlay {
+                                    if expiry != option {
+                                        Capsule().strokeBorder(Bento.edge, lineWidth: 1)
+                                    }
+                                }
+                                .contentShape(.capsule)
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(expiry == option ? .isSelected : [])
@@ -165,7 +181,8 @@ struct StatusPicker: View {
                         Text(ActivityFormat.statusUntil(date, now: context.date))
                     }
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.secondaryText)
+                    .padding(.horizontal, 4)
                     .accessibilityElement(children: .combine)
                 }
             }
@@ -185,10 +202,12 @@ struct StatusPicker: View {
                     .font(.body.weight(.semibold))
             }
             .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .background(.surfaceMuted, in: .rect(cornerRadius: 16))
+            .frame(maxWidth: .infinity, minHeight: 40)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .tint(.primary)
         .disabled(isSaving)
     }
 
@@ -201,16 +220,20 @@ struct StatusPicker: View {
                     OrbLoader(compact: true).accessibilityHidden(true)
                 }
                 Text("Set status")
-                    .font(.title3.weight(.semibold))
+                    .font(.title3.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
             }
+            // The glass style adds about 12pt of padding: 60pt in all.
+            .frame(maxWidth: .infinity, minHeight: 48)
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, minHeight: 60)
-            .background(.accent, in: .rect(cornerRadius: 20))
-            .opacity(canSave ? 1 : 0.45)
+            .contentShape(.rect(cornerRadius: Bento.radius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.roundedRectangle(radius: Bento.radius))
+        .tint(.accent)
         .disabled(!canSave || isSaving)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, Bento.margin)
         .padding(.vertical, 12)
         .background(.canvas)
     }

@@ -5,37 +5,25 @@ import SwiftUI
 /// name is requested from Apple; nothing else.
 struct WelcomeView: View {
     @Environment(SessionStore.self) private var session
-    @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .largeTitle) private var markBase: CGFloat = 96
     @State private var isSigningIn = false
     @State private var message: String?
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
-                Icon.home
-                    .size(64)
-                    .foregroundStyle(.accent)
-                    .frame(width: 128, height: 128)
-                    .background(Color.accent.opacity(0.14), in: .circle)
-                    .padding(.top, 48)
-
-                VStack(spacing: 12) {
-                    Text("Hamro Steps")
-                        .font(.largeTitle.bold())
-                    Text("Walk together as a family, wherever you live.")
-                        .font(.title3)
-                        .foregroundStyle(.secondaryText)
-                        .multilineTextAlignment(.center)
-                }
-
-                VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: Bento.gap) {
+                hero
+                VStack(alignment: .leading, spacing: 18) {
                     point(.family, "One shared step goal for the whole family.")
                     point(.health, "Your steps come from Apple Health. Nothing to type in.")
                     point(.goal, "See how the family is doing today at a glance.")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Bento.padding)
+                .bentoSurface()
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.top, 16)
         }
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
@@ -49,7 +37,7 @@ struct WelcomeView: View {
                     } onCompletion: { result in
                         handle(result)
                     }
-                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                    .signInWithAppleButtonStyle(.black)
                     .frame(height: 56)
                     .clipShape(.capsule)
                     Link("Privacy policy", destination: URL(string: "https://subiixu.github.io/hamro-steps/privacy/")!)
@@ -68,11 +56,44 @@ struct WelcomeView: View {
                     #endif
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
             .background(.canvas)
         }
         .background(.canvas)
     }
+
+    /// The large hero tile: the app mark on a soft accent wash, the name and
+    /// the one-line promise.
+    private var hero: some View {
+        VStack(spacing: 20) {
+            Icon.home
+                .size(markIcon)
+                .foregroundStyle(.white)
+                .frame(width: markSide, height: markSide)
+                .background(.accent, in: .rect(cornerRadius: markSide * 0.28, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(spacing: 10) {
+                Text("Hamro Steps")
+                    .font(.largeTitle.bold())
+                    .multilineTextAlignment(.center)
+                Text("Walk together as a family, wherever you live.")
+                    .font(.title3)
+                    .foregroundStyle(.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, Bento.padding)
+        .padding(.vertical, 44)
+        .bentoSurface(Color.accent.opacity(0.10))
+        .background(.surface, in: .rect(cornerRadius: Bento.radius, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var markSide: CGFloat { min(markBase, 140) }
+    private var markIcon: CGFloat { markSide * 0.5 }
 
     private func point(_ icon: Icon, _ text: LocalizedStringKey) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
@@ -131,24 +152,29 @@ struct AskNameView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("What should your family call you?")
-                    .font(.largeTitle.bold())
-                    .padding(.top, 48)
-                Text("Just your first name, or what they call you at home.")
-                    .font(.body)
-                    .foregroundStyle(.secondaryText)
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("What should your family call you?")
+                        .font(.largeTitle.bold())
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Just your first name, or what they call you at home.")
+                        .font(.body)
+                        .foregroundStyle(.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 4)
+                .padding(.top, 32)
+                .padding(.bottom, 8)
                 TextField("First name", text: $name)
                     .font(.title2)
                     .textContentType(.givenName)
                     .submitLabel(.done)
                     .focused($focused)
-                    .padding(16)
-                    .background(.surface, in: .rect(cornerRadius: 16))
+                    .fieldTile()
                     .onSubmit(save)
                 if let message { Notice(text: message) }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
         }
         .safeAreaInset(edge: .bottom) {
             Group {
@@ -158,7 +184,9 @@ struct AskNameView: View {
                     PrimaryButton(title: "Continue", isEnabled: FamilyRules.isValidName(name), action: save)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 16)
+            .background(.canvas)
         }
         .background(.canvas)
         .onAppear { focused = true }

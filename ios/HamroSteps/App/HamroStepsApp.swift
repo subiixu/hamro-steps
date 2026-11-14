@@ -21,6 +21,8 @@ struct HamroStepsApp: App {
                 .tint(.accent)
                 // Light mode only (also UIUserInterfaceStyle in project.yml).
                 .preferredColorScheme(.light)
+                // Debug `-activityGallery <page>` screenshots; no-op otherwise.
+                .activityGalleryOnLaunch()
         }
     }
 }
@@ -185,11 +187,11 @@ enum AppLaunch {
         return HealthKitStepSource()
     }
 
-    /// The system's notification prompt, except on a Debug `-screen home`
-    /// launch, where it would sit over the Home screenshots.
+    /// The system's notification prompt, except on a Debug `-screen` or
+    /// `-activityGallery` launch, where it would sit over the screenshots.
     static func pushAuthorizer() -> any PushAuthorizer {
         #if DEBUG
-        if screen == .home { return SilentPushAuthorizer() }
+        if screen != nil || ActivityGalleryLaunch.current != nil { return SilentPushAuthorizer() }
         #endif
         return SystemPushAuthorizer()
     }

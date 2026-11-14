@@ -72,49 +72,54 @@ struct NotificationSettingsView: View {
     let model: NotificationSettingsModel
 
     var body: some View {
-        Form {
-            switch model.phase {
-            case .loading:
-                ActivityLoadingRow(message: "Loading your notification settings…")
-                    .frame(maxWidth: .infinity, minHeight: 80)
-            case .failed:
-                Section {
-                    Text("We couldn't load your notification settings.")
-                        .foregroundStyle(.secondary)
-                    Button("Try again") { Task { await model.load() } }
-                }
-            case .loaded:
-                Section {
-                    ForEach(NotificationKind.allCases) { kind in
-                        Toggle(isOn: binding(for: kind)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(kind.title)
-                                    .font(.body.weight(.semibold))
-                                Text(kind.detail)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Bento.gap) {
+                switch model.phase {
+                case .loading:
+                    ActivityLoadingRow(message: "Loading your notification settings…")
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                case .failed:
+                    Notice(text: String(localized: "We couldn't load your notification settings.")) {
+                        Task { await model.load() }
+                    }
+                case .loaded:
+                    Card(title: "Let me know when", icon: .notification) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(NotificationKind.allCases.enumerated()), id: \.element) { index, kind in
+                                if index > 0 { TileDivider() }
+                                Toggle(isOn: binding(for: kind)) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(kind.title)
+                                            .font(.body.weight(.semibold))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Text(kind.detail)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .tint(.accent)
+                                .disabled(model.isSaving(kind))
+                                .padding(.vertical, 14)
                             }
-                            .padding(.vertical, 6)
                         }
-                        .tint(.accent)
-                        .disabled(model.isSaving(kind))
                     }
-                } header: {
-                    HStack(spacing: 6) {
-                        Icon.notification.size(16)
-                        Text("Let me know when")
+                    Group {
+                        if model.saveFailed {
+                            Text("That change didn't save. Check your connection and try again.")
+                        } else {
+                            Text("Your family never sees these settings.")
+                        }
                     }
-                } footer: {
-                    if model.saveFailed {
-                        Text("That change didn't save. Check your connection and try again.")
-                    } else {
-                        Text("Your family never sees these settings.")
-                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
                 }
             }
+            .padding(.horizontal, Bento.margin)
+            .padding(.vertical, 8)
         }
-        .scrollContentBackground(.hidden)
         .background(.canvas)
         .navigationTitle("Notifications")
         .task { await model.load() }
