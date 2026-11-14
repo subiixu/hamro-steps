@@ -16,7 +16,6 @@ Usage band: green (5h 42% used, 15:36)
 ## Running workers
 - 2026-11-14 15:35 · claude/claude-opus-5-5 high · term s_21a6035f · handoffs/briefs/2026-11-14-1630-ios-convex-client.md · isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-convex-client · branch: jw/ios-convex-client
 - 2026-11-14 15:35 · claude/claude-opus-5-5 medium · term s_2d8f7e3e · handoffs/briefs/2026-11-14-1600-ios-push.md · isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-push · branch: jw/ios-push
-- 2026-11-14 14:06 · codex/gpt-6-astra high · term s_9dd4f84f · handoffs/briefs/2026-11-14-1440-app-icon.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 

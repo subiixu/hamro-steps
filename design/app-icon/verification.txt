@@ -1,0 +1,21 @@
+/Users/subixu/BIXUSTUDIO/DEV/hamro-steps/design/app-icon/AppIcon-1024.png
+  pixelWidth: 1024
+  pixelHeight: 1024
+  hasAlpha: no
+/Users/subixu/BIXUSTUDIO/DEV/hamro-steps/design/app-icon/AppIcon-1024-dark.png
+  pixelWidth: 1024
+  pixelHeight: 1024
+  hasAlpha: no
+/Users/subixu/BIXUSTUDIO/DEV/hamro-steps/design/app-icon/AppIcon-1024-tinted.png
+  pixelWidth: 1024
+  pixelHeight: 1024
+  hasAlpha: yes
+
+Deterministic PNG verification (python3 -I, standard library only): PASS
+All exports: 1024x1024, 8-bit PNG; light/dark RGB without alpha; tinted RGBA.
+Every light/dark pixel matches its approved flat palette composited using the shared mask, including antialiased edges.
+Tinted: every visible RGB is #DDDDDD; zero-alpha pixels have zero RGB; alpha spans 0..255.
+Corners: opaque light/dark, transparent tinted. Four connected mask components: [17018, 38337, 39021, 137672]
+SVG orientation: PASS. SVG has three footprint paths and one true circle centered (512,512), radius 354, stroke 62.
+concept.md: exactly three lines. No app build checks required for this image-only brief, per task clarification.
+Visual review: PASS at 188x188 and native 60x60 for light, dark, and tinted; three separate footprints and the circle remain clear.

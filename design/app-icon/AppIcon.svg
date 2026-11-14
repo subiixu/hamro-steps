@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Hamro Steps — one family, one goal</title>
+  <desc>Three family footprints inside a true circular goal ring. Light appearance source; build.swift exports light, dark, and transparent grayscale variants.</desc>
+  <rect x="0" y="0" width="1024" height="1024" fill="#FDF5EC"/>
+  <circle cx="512" cy="512" r="354" fill="none" stroke="#E2672F" stroke-width="62"/>
+  <path fill="#E2672F" d="M 308 690 C 278 697 257 677 260 645 C 264 604 273 580 271 549 C 267 503 284 448 312 407 C 338 368 378 348 411 360 C 445 372 459 405 450 439 C 441 475 416 501 394 528 C 374 552 370 579 363 614 C 357 651 343 682 308 690 Z"/>
+  <path fill="#E2672F" d="M 454 711 C 432 715 424 697 429 675 C 435 653 442 630 442 607 C 439 577 455 546 476 520 C 495 497 519 487 540 497 C 567 508 574 532 563 556 C 553 579 531 594 518 615 C 504 637 501 666 485 690 C 476 705 466 710 454 711 Z"/>
+  <path fill="#E2672F" d="M 626 686 C 597 695 575 676 579 646 C 584 608 601 575 603 544 C 606 509 597 482 602 446 C 606 402 627 366 661 355 C 699 343 735 358 753 391 C 773 428 765 468 744 505 C 725 539 700 566 685 597 C 669 629 662 673 626 686 Z"/>
+</svg>
