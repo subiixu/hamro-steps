@@ -2,7 +2,9 @@
 worker: claude
 model: claude-opus-5-5
 effort: high
-started: 2026-11-14 14:40 · terminal: s_07720fdd
+started: 2026-11-14 15:17 · terminal: s_19a93bf3
+redo: handoffs/2026-11-14-1510-ios-convex-client.md
+why: Second opinion Blocking (handoffs/reviews/2026-11-14-1510-ios-convex-client-second.md): fix all 3 findings with tests (SDK loginFromCache must force refresh; sign-out vs concurrent refresh race; retry failed Keychain write of rotated refresh token). Rebase note: main already fixed the Icon clock/cheer break.
 isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-convex-client · branch: jw/ios-convex-client
 Tasks: T-4, T-5, T-6
 files: ios/project.yml, ios/HamroSteps/Services/Convex/**, ios/HamroStepsTests/Convex*.swift

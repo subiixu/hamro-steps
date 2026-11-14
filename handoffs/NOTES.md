@@ -8,3 +8,4 @@
 - Stack: native SwiftUI + HealthKit (iPhone only), Convex backend (per PRD); invites are code-first for the pilot (link opens a page with the 6-char code + TestFlight link), no deferred deep links until a domain exists <!-- from 20 · 2026-11-14T14:01 -->
 - User wants maximum parallelism: run as many workers as can work independently to finish fast <!-- from 25 · 2026-11-14T14:05 -->
 - Apple Developer team ID: JQ2D4NNS3B <!-- from 63 · 2026-11-14T14:46 -->
+- Old team APNs key QS2J5JQ7W5 deleted by user; new key 4L75BC2Z4S <!-- from 90 · 2026-11-14T15:23 -->
