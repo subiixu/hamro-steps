@@ -30,6 +30,22 @@ enum Icon: String, CaseIterable, Sendable {
     case delete = "icon-delete"              // delete-02: delete account
     case close = "icon-close"                // cancel-01: close a sheet
 
+    // Activity: walks, status, feed, notifications
+    case walking = "icon-walking"            // walking: "I'm walking", badge
+    case stop = "icon-stop"                  // stop: "Stop walk"
+    case clock = "icon-clock"                // clock-01: walk timer, expiry
+    case notification = "icon-notification"  // notification-01
+    case check = "icon-check"                // tick-02: selected option
+    case clear = "icon-clear"                // cancel-01: clear status
+    case statusWork = "icon-status-work"             // briefcase-01
+    case statusHome = "icon-status-home"             // home-01
+    case statusCommuting = "icon-status-commuting"   // bus-01
+    case statusWorkout = "icon-status-workout"       // dumbbell-01
+    case statusHike = "icon-status-hike"             // mountain
+    case statusResting = "icon-status-resting"       // sofa-01
+    case statusTravelling = "icon-status-travelling" // airplane-01
+    case statusCustom = "icon-status-custom"         // message-01: custom text
+
     var image: Image {
         Image(rawValue).renderingMode(.template)
     }
