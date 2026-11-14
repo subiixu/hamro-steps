@@ -14,15 +14,18 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-- 2026-11-14 14:17 · claude/claude-opus-5-5 high · term s_19e7b9bf · handoffs/briefs/2026-11-14-1415-convex-core.md
+- 2026-11-14 14:35 · claude/claude-opus-5-5 high · term s_d15669fa · handoffs/briefs/2026-11-14-1415-convex-core.md
+- 2026-11-14 14:26 · claude/claude-opus-5-5 medium · term s_82c1054a · handoffs/briefs/2026-11-14-1545-ios-visual-fix.md
 - 2026-11-14 14:06 · codex/gpt-6-astra high · term s_9dd4f84f · handoffs/briefs/2026-11-14-1440-app-icon.md
 - 2026-11-14 14:06 · claude/claude-opus-5-5 high · term s_b2eb48e6 · handoffs/briefs/2026-11-14-1440-ios-activity-ui.md · isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-activity-ui · branch: jw/ios-activity-ui
-- 2026-11-14 14:03 · claude/claude-opus-5-5 high · term s_e5c84894 · handoffs/briefs/2026-11-14-1425-ios-home-mock.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
-- ios-home-mock partial (all built, 4.5k lines, checks green): second opinion running → merge; screenshots worker s_08faa7 runs in parallel.
+- ios-visual-fix done (checks green, screenshots ok) → merge right after ios-home-logic-fix.
+- convex-core redo #2 (s_d15669): Apple revoke queue must keep tokens until revoked + recovery cron. Then fresh second opinion → merge (--anyway if iOS check red from WIP) → spawn backend phase 2.
+- ios-activity-ui (isolated, done, 62 tests): second opinion Has concerns (3 should-fix: notification toggle overlap, reaction overlap revert, walk limit not clearing at Nepal midnight → fold into iOS phase 4); merge AFTER ios-home-logic-fix merges (Icon.swift uncommitted in main). Then add `.activityGalleryOnLaunch()` after `.background(.canvas)` in RootView (or leave for iOS phase 4).
+- ios-home-mock partial: second opinion Blocking → fixes split: ios-home-logic-fix (its handoff lists ALL home-mock files; merge it first) + ios-visual-fix (merge second).
 
 ## To-do
 - PRD = docs/PRD.md (backend Convex, invites code-first for pilot). Tasks T-4…T-10. Supabase work dropped (archived ~/.jarvis-archive/hamro-steps/).

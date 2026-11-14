@@ -11,7 +11,7 @@ struct AssetTests {
         #expect(image.size == CGSize(width: 24, height: 24))
     }
 
-    @Test(arguments: ["AccentColor", "Canvas", "Surface", "SurfaceMuted", "Streak", "Cheer", "Goal"])
+    @Test(arguments: ["AccentColor", "Canvas", "Surface", "SurfaceMuted", "Goal"])
     func colourExists(_ name: String) {
         #expect(UIColor(named: name) != nil)
     }

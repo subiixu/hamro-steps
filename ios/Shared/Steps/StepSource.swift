@@ -10,6 +10,10 @@ protocol StepSource: Sendable {
     /// whether the user allowed it: HealthKit hides read denials.
     func requestAuthorization() async throws
 
+    /// Whether we've already shown the permission sheet. HealthKit never says
+    /// what the user picked, only that they were asked.
+    func hasRequestedAuthorization() async -> Bool
+
     /// Summed steps per calendar day for days starting in `start..<end`,
     /// keyed by the start of each day. Days with no data may be missing.
     func dailyStepTotals(from start: Date, to end: Date, calendar: Calendar) async throws -> [Date: Int]

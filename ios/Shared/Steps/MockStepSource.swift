@@ -14,6 +14,7 @@ struct MockStepSource: StepSource {
     /// Simulated latency, so previews can show the loading state.
     var delay: Duration = .zero
     var failure: MockFailure?
+    var alreadyRequested = true
 
     struct MockFailure: Error, Hashable, Sendable {}
 
@@ -27,6 +28,8 @@ struct MockStepSource: StepSource {
     func requestAuthorization() async throws {
         if delay > .zero { try await Task.sleep(for: delay) }
     }
+
+    func hasRequestedAuthorization() async -> Bool { alreadyRequested }
 
     func dailyStepTotals(from start: Date, to end: Date, calendar: Calendar) async throws -> [Date: Int] {
         if delay > .zero { try await Task.sleep(for: delay) }

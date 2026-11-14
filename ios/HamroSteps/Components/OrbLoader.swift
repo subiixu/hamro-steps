@@ -5,25 +5,36 @@ import ThinkingOrbsKit
 /// `ProgressView`). Pick the orb state that matches the activity.
 struct OrbLoader: View {
     enum Activity {
-        case readingSteps
+        case loadingFamily
+        case syncingSteps
         case connectingHealth
+        case signingIn
+        case saving
+        case joining
+        case deleting
 
         var orbState: OrbState {
             switch self {
-            case .readingSteps: .working
-            case .connectingHealth: .connecting
+            case .loadingFamily, .syncingSteps: .working
+            case .connectingHealth, .signingIn, .joining: .connecting
+            case .saving, .deleting: .working
             }
         }
 
         var message: LocalizedStringKey {
             switch self {
-            case .readingSteps: "Counting your steps…"
+            case .loadingFamily: "Getting your family's steps…"
+            case .syncingSteps: "Sending your steps…"
             case .connectingHealth: "Connecting to Apple Health…"
+            case .signingIn: "Signing you in…"
+            case .saving: "Saving…"
+            case .joining: "Joining your family…"
+            case .deleting: "Deleting your account…"
             }
         }
     }
 
-    var activity: Activity = .readingSteps
+    var activity: Activity = .loadingFamily
     var compact = false
 
     var body: some View {
@@ -34,8 +45,9 @@ struct OrbLoader: View {
             VStack(spacing: 16) {
                 ThinkingOrb(state: activity.orbState, size: .px64)
                 Text(activity.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.body)
+                    .foregroundStyle(.secondaryText)
+                    .multilineTextAlignment(.center)
             }
             .accessibilityElement(children: .combine)
         }
@@ -44,7 +56,7 @@ struct OrbLoader: View {
 
 #Preview {
     VStack(spacing: 40) {
-        OrbLoader(activity: .readingSteps)
+        OrbLoader(activity: .loadingFamily)
         OrbLoader(activity: .connectingHealth)
         OrbLoader(compact: true)
     }

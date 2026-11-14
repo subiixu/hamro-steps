@@ -77,39 +77,3 @@ struct StepHistoryTests {
         ])
     }
 }
-
-@MainActor
-struct StepStoreTests {
-    private nonisolated static let fixedNow = Date(timeIntervalSince1970: 1_794_000_000)
-
-    @Test func refreshLoadsTheWeek() async {
-        let store = StepStore(source: MockStepSource.sampleWeek(now: Self.fixedNow), now: { Self.fixedNow })
-        await store.refresh()
-        guard case .loaded(let summary) = store.phase else {
-            Issue.record("expected loaded, got \(store.phase)"); return
-        }
-        #expect(summary.days.count == StepStore.windowDays)
-        #expect(summary.today == 7_318)
-    }
-
-    @Test func connectWithNoDataShowsZerosNotAnError() async {
-        let store = StepStore(source: MockStepSource(), now: { Self.fixedNow })
-        await store.connect()
-        guard case .loaded(let summary) = store.phase else {
-            Issue.record("expected loaded, got \(store.phase)"); return
-        }
-        #expect(summary.isAllZero)
-    }
-
-    @Test func unavailableSource() async {
-        let store = StepStore(source: MockStepSource(isAvailable: false))
-        await store.refresh()
-        #expect(store.phase == .unavailable)
-    }
-
-    @Test func failedReadWithoutEarlierDataIsFailed() async {
-        let store = StepStore(source: MockStepSource(failure: .init()))
-        await store.refresh()
-        #expect(store.phase == .failed)
-    }
-}

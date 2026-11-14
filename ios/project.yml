@@ -42,8 +42,17 @@ targets:
       - package: LibrariesDev
         product: ThinkingOrbsKit
       - sdk: HealthKit.framework
+      - sdk: AuthenticationServices.framework
+    # XcodeGen rewrites the .entitlements file from these properties on
+    # every generate, so they must live here, not in the file.
     entitlements:
       path: HamroSteps/Resources/HamroSteps.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        com.apple.developer.healthkit.background-delivery: true
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bixustudio.hamrosteps

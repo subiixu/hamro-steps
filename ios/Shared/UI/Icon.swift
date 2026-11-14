@@ -7,16 +7,28 @@ import SwiftUI
 /// Use `Icon.home` as a view (24pt by default, `.size(_:)` to change), or
 /// `Icon.home.image` where SwiftUI needs a bare `Image` (tab items, `Label`).
 enum Icon: String, CaseIterable, Sendable {
-    case home = "icon-home"                  // footprints: the Today tab
+    case home = "icon-home"                  // footprints: the Home tab
     case family = "icon-family"              // user-group
-    case profile = "icon-profile"            // user
-    case settings = "icon-settings"          // settings-01
+    case profile = "icon-profile"            // user: the Me tab
+    case settings = "icon-settings"          // settings-01: family settings
     case plus = "icon-plus"                  // add-01
+    case minus = "icon-minus"                // minus-sign
     case chevronRight = "icon-chevron-right" // arrow-right-01
-    case fire = "icon-fire"                  // streaks
-    case cheer = "icon-cheer"                // clapping-01
-    case goal = "icon-goal"                  // target-02
+    case chevronDown = "icon-chevron-down"   // arrow-down-01: family switcher
+    case goal = "icon-goal"                  // target-02: daily goal
     case share = "icon-share"                // share-08: invites
+    case copy = "icon-copy"                  // copy-01
+    case refresh = "icon-refresh"            // refresh-01: new invite code
+    case health = "icon-health"              // health: Apple Health
+    case clock = "icon-clock"                // clock-01: last synced
+    case tick = "icon-tick"                  // tick-02: goal hit, selected family
+    case celebrate = "icon-celebrate"        // party: goal reached
+    case organiser = "icon-organiser"        // crown-02: subtle organiser mark
+    case edit = "icon-edit"                  // pencil-edit-01
+    case userRemove = "icon-user-remove"     // user-remove-01
+    case logout = "icon-logout"              // logout-01: sign out, leave family
+    case delete = "icon-delete"              // delete-02: delete account
+    case close = "icon-close"                // cancel-01: close a sheet
 
     var image: Image {
         Image(rawValue).renderingMode(.template)
