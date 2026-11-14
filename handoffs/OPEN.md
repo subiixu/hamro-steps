@@ -20,13 +20,11 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
-- schema handoff 1349: second opinion Blocking (owner hand-off race) → redo worker s_ab7939 spawned; re-review + merge when its handoff lands. Local DB ports 554xx.
-<!-- - handoff to review: handoffs/<file>.md · migration to apply · release to cut -->
 
 ## To-do
-- User is sending a full PRD (msgs 1–9, 13:4x). When it lands: record its tasks, diff it against the phase-1 briefs (schema + scaffold) and the phase 2/3 plan below; send corrections to running workers via `ultron term send` or follow-up briefs.
-- Launch prompt had no numbered message, so no T-ids yet; phase-2+ briefs take the PRD's T-ids. Stack decided 2026-11-14: iPhone-only SwiftUI + HealthKit, Supabase; v1 = invites, today view, weekly leaderboard, family daily goal, streaks, cheers/nudges (push), home-screen widget.
-- Phase 2 (after both phase-1 handoffs merge): iOS Sign in with Apple via Supabase Auth (supabase-swift SPM — Jarvis approves the dependency), create/join family by invite code + share sheet, step sync (upsert_steps on foreground + background delivery), Today screen (family_today) + weekly leaderboard. opus/high, --after both handoffs.
-- Phase 3a: family daily goal ring, streaks on Me + Today, cheers/nudges UI + Edge Function sending APNs on cheers insert (APNs key = user supplies; never to free models).
-- Phase 3b (isolated or after 3a): WidgetKit extension + app group showing today's family total.
-- User setup needed before device testing: Apple Developer team id, hosted Supabase project (user creates; Jarvis never pushes migrations to prod without asking), Sign in with Apple capability.
+- PRD = docs/PRD.md (backend Convex, invites code-first for pilot). Tasks T-4…T-10. Supabase work dropped (archived ~/.jarvis-archive/hamro-steps/).
+- Backend phase 2 (after convex-core merges, --after it): walks (F9–F11), status (F12), feed auto-events + 5 reactions (F13–F14), APNs action + device tokens + per-type mutes + evening nudge (F15–F16). T-7…T-10. APNs key/env = user supplies; never to free models.
+- iOS phase 3 (after convex-core AND ios-home-mock merge): wire ConvexMobile (convex-swift SPM, Jarvis approves) + auth endpoints, replace mock service; background delivery sync.
+- iOS phase 4 (after backend phase 2): walking button/badge, status picker, feed + reactions, push registration + mute settings.
+- Invite web page (pilot): static page showing the 6-char code + TestFlight link — needs hosting choice later.
+- User setup before device testing: Apple Developer team id + SIWA capability, Convex project (user creates/logs in), APNs key, privacy policy URL before TestFlight.

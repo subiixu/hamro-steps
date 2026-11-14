@@ -2,7 +2,9 @@
 worker: claude
 model: claude-opus-5-5
 effort: high
-started: 2026-11-14 13:39 · terminal: s_50e3db05
+started: 2026-11-14 13:53 · terminal: s_ab7939d6
+redo: handoffs/2026-11-14-1349-supabase-schema.md
+why: Second opinion Blocking: owner hand-off races with concurrent successor departure (migration:244); serialize per family + regression test — see handoffs/reviews/2026-11-14-1349-supabase-schema-second.md
 files: supabase/**
 
 ## Goal

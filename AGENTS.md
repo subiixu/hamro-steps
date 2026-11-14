@@ -65,7 +65,7 @@ Several workers edit the same checkout at once, in separate Ultron sessions. So:
   handoff, so write it for that reader: what's done, what's left, where.
 - **Verification:** Use isolated test data and report the exact checks run.
 - **Checks:** run `ultron check` before handing off. It runs the project's
-  checks (`scripts/check-ios.sh`: xcodebuild test; `scripts/check-db.sh`: local Supabase pgTAP), from `checks:` in `.ultron/project.yaml`, records the
+  checks (`scripts/check-ios.sh`: xcodebuild test; `scripts/check-backend.sh`: Convex typecheck + tests), from `checks:` in `.ultron/project.yaml`, records the
   result for Jarvis and prints a `## Checks run` section: paste it into your
   handoff as it is. Jarvis won't merge a handoff whose checks are red. A run
   can take minutes, so give the call a long timeout. Say plainly what you

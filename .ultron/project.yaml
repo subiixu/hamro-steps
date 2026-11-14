@@ -3,10 +3,10 @@
   "id": "p_hamro-steps",
   "name": "Hamro Steps",
   "permissions": "auto",
-  "stack": "Swift, SwiftUI, HealthKit, WidgetKit, XcodeGen, Supabase (Postgres, Auth, RLS, Edge Functions), APNs",
+  "stack": "Swift, SwiftUI, HealthKit, XcodeGen, Convex (TypeScript), APNs",
   "stage": "idea",
   "checks": [
     "scripts/check-ios.sh",
-    "scripts/check-db.sh"
+    "scripts/check-backend.sh"
   ]
 }
