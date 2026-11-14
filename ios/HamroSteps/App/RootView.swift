@@ -6,6 +6,8 @@ struct RootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(StepSync.self) private var stepSync
     @Environment(HomeModel.self) private var home
+    @Environment(PushRegistrar.self) private var push
+    @Environment(PushInbox.self) private var pushInbox
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -41,6 +43,21 @@ struct RootView: View {
         }
         .task(id: session.families) {
             await home.update(families: session.families)
+            await pushInbox.open(session: session, home: home)
+        }
+        .task(id: PushMoment(started: session.isStarted, signedIn: session.user != nil, onHome: session.route == .main)) {
+            // Signed in: register again (tokens change). The permission prompt
+            // waits for the first time Home shows, never before sign-in.
+            guard session.isStarted else { return }
+            await push.sessionChanged(signedIn: session.user != nil, inFamily: session.route == .main)
+        }
+        .onChange(of: pushInbox.tapCount) {
+            Task { await pushInbox.open(session: session, home: home) }
+        }
+        .onChange(of: session.route) { _, route in
+            // A tap during onboarding waits for Home.
+            guard route == .main else { return }
+            Task { await pushInbox.open(session: session, home: home) }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, session.user != nil else { return }
@@ -74,9 +91,16 @@ struct RootView: View {
     }
 }
 
+private struct PushMoment: Equatable {
+    let started: Bool
+    let signedIn: Bool
+    let onHome: Bool
+}
+
 struct MainTabView: View {
     enum TabID: Hashable { case home, me }
 
+    @Environment(PushInbox.self) private var pushInbox
     @State private var selection: TabID = AppLaunch.screen == .me ? .me : .home
 
     var body: some View {
@@ -92,6 +116,8 @@ struct MainTabView: View {
                 Label { Text("Me") } icon: { Icon.profile.image }
             }
         }
+        // Every notification tap opens Home.
+        .onChange(of: pushInbox.tapCount) { selection = .home }
     }
 }
 

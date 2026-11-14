@@ -62,6 +62,7 @@ targets:
         com.apple.developer.healthkit.background-delivery: true
         com.apple.developer.applesignin:
           - Default
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bixustudio.hamrosteps

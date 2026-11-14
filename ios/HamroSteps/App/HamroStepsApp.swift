@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @main
 struct HamroStepsApp: App {
@@ -11,6 +12,8 @@ struct HamroStepsApp: App {
                 .environment(delegate.session)
                 .environment(delegate.stepSync)
                 .environment(delegate.home)
+                .environment(delegate.push)
+                .environment(delegate.pushInbox)
                 .environment(\.familyService, delegate.services.family)
                 .environment(\.authService, delegate.services.auth)
                 .environment(\.activityService, delegate.services.activity)
@@ -20,16 +23,20 @@ struct HamroStepsApp: App {
     }
 }
 
-/// Owns the services and the long-lived models, and registers HealthKit
-/// background delivery at launch, as Apple requires.
+/// Owns the services and the long-lived models, registers HealthKit
+/// background delivery at launch, as Apple requires, and is the system's
+/// door for push: the APNs token and notification taps.
 @MainActor
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     let services = AppLaunch.services()
-    lazy var session = SessionStore(auth: services.auth, service: services.family)
+    lazy var push = PushRegistrar(activity: services.activity)
+    let pushInbox = PushInbox()
+    lazy var session = SessionStore(auth: services.auth, service: services.family, push: push)
     lazy var stepSync = StepSync(source: services.steps, service: services.family)
     lazy var home = HomeModel(service: services.family)
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
         let home = home
         stepSync.onSynced = { await home.syncFinished() }
         if let healthKit = services.steps as? HealthKitStepSource {
@@ -42,6 +49,31 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
         return true
+    }
+
+    // MARK: Push
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let push = push
+        Task { await push.didReceive(token: deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error) {
+        // Simulator or no network: nothing to send; the next launch tries again.
+    }
+
+    /// In the foreground: still show it.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let payload = PushRouter.payload(from: response.notification.request.content.userInfo)
+        await MainActor.run { pushInbox.received(payload) }
     }
 }
 
