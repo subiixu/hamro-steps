@@ -22,7 +22,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "3"
+    CURRENT_PROJECT_VERSION: "4"
     TARGETED_DEVICE_FAMILY: "1"
     # Colours and icons go through the typed wrappers in Shared/UI.
     ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
@@ -77,6 +77,9 @@ targets:
         CONVEX_SITE_URL: https://harmless-dolphin-642.ap-southeast-2.convex.site
         INFOPLIST_KEY_CFBundleDisplayName: Hamro Steps
         INFOPLIST_KEY_NSHealthShareUsageDescription: Hamro Steps reads your step count to share it with your family.
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: Hamro Steps only reads your step count. It never writes to Health.
+        # iPhone only: the target default (1,2) overrides the project-level setting.
+        TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIUserInterfaceStyle: Light
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
