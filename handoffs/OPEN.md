@@ -14,6 +14,8 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
+- 2026-11-14 14:40 · claude/claude-opus-5-5 high · term s_07720fdd · handoffs/briefs/2026-11-14-1630-ios-convex-client.md · isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-convex-client · branch: jw/ios-convex-client
+- 2026-11-14 14:40 · claude/claude-opus-5-5 medium · term s_c2e1f17e · handoffs/briefs/2026-11-14-1630-convex-walks-status.md
 - 2026-11-14 14:39 · claude/claude-opus-5-5 medium · term s_253ca1b2 · handoffs/briefs/2026-11-14-1615-ios-model-fixes.md
 - 2026-11-14 14:39 · claude/claude-opus-5-5 medium · term s_d484ac05 · handoffs/briefs/2026-11-14-1615-ios-activity-placement.md
 - 2026-11-14 14:06 · codex/gpt-6-astra high · term s_9dd4f84f · handoffs/briefs/2026-11-14-1440-app-icon.md
@@ -21,12 +23,11 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
-- convex-core redo #2 (s_d15669): Apple revoke queue must keep tokens until revoked + recovery cron. Then fresh second opinion → merge (--anyway if iOS check red from WIP) → spawn backend phase 2.
 
 ## To-do
 - PRD = docs/PRD.md (backend Convex, invites code-first for pilot). Tasks T-4…T-10. Supabase work dropped (archived ~/.jarvis-archive/hamro-steps/).
-- Backend phase 2 — spawn the moment convex-core merges (--after it), split in 3 narrow briefs run sequentially (schema.ts shared): 2a walks+status (+familyToday fields), 2b feed+reactions, 2c push/devices/prefs/nudge. Contract docs/contract-activity.md: walks (F9–F11), status (F12), feed auto-events + 5 reactions (F13–F14), APNs action + device tokens + per-type mutes + evening nudge (F15–F16). T-7…T-10. APNs key/env = user supplies; never to free models.
-- iOS phase 3 (after convex-core merges; ios-home-mock merged ✓): wire ConvexMobile (convex-swift SPM, Jarvis approves) + auth endpoints, replace mock service; background delivery sync.
+- Backend phase 2 — spawn the moment convex-core merges (--after it), 2a walks+status RUNNING; then 2b feed+reactions (--after 2a), then 2c push/devices/prefs/nudge (--after 2b). Contract docs/contract-activity.md: walks (F9–F11), status (F12), feed auto-events + 5 reactions (F13–F14), APNs action + device tokens + per-type mutes + evening nudge (F15–F16). T-7…T-10. APNs key/env = user supplies; never to free models.
+- iOS phase 3 Convex client RUNNING (isolated). After merge: apply its AppLaunch.services() swap line + set CONVEX_URL/SITE_URL build settings once the user has a Convex project. Then ConvexActivityService after backend 2a–2c.
 - iOS phase 4a placement + model fixes RUNNING. Then: push registration/routing (after backend 2c). ios-model-fixes handoff names a HamroStepsApp.swift line to switch reload()→refresh() — apply after placement merges.
 - Host web/ (invite + privacy) somewhere — user picks host; TestFlight URL + privacy email placeholders to fill.
 - App icon (codex) → Jarvis installs design/app-icon into ios AppIcon.appiconset after merge.
