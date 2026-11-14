@@ -11,7 +11,8 @@ Usage band: green (the 5-hour window has reset since the last reading (23 min ag
 
 ## Questions for the user
 - manual test (live app, past Home): user confirmed onboarding → Home works on their phone (2026-11-14). Still unchecked: walk push to a 2nd phone, reactions, sign out.
-- (T-31) TestFlight 0.1.0 (1): archived at ~/Library/Developer/Xcode/Archives/2026-11-14/HamroSteps-0.1.0-1.xcarchive; user uploads it from Xcode Organizer (upload is the user's) and sets up testers.
+- (T-31) TestFlight 0.1.0 (2): build 1 rejected (iPad orientations, missing NSHealthUpdateUsageDescription); fixed in project.yml. Build 2 archived from HEAD (without the uncommitted light-mode edits, by the user's choice); user uploads it from Organizer. App record now exists.
+- Uncommitted iOS edits (15 files, 20:15–20:17, light mode only + Home/Me/WalkButton/InviteCode/Card/colours) came from outside Jarvis; user kept them out of TestFlight. Ask what to do with them.
 - manual test (privacy link): on a phone, tap "Privacy policy" on Welcome and on Me → Safari opens the privacy page; check the Me row looks right (not seen on screen yet).
 - manual test (web pages): open web/invite/index.html?code=K7M2QX and web/privacy/index.html in Safari; check dark mode; founders review the DRAFT privacy text + set real contact email and TestFlight URL.
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
