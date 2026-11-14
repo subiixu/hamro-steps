@@ -10,7 +10,8 @@ Jarvis session: s_70936213
 Usage band: green (the 5-hour window has reset since the last reading (23 min ago), 18:36)
 
 ## Questions for the user
-- manual test (live app on iPhone): build to your phone from Xcode (Debug, no launch flags) → Sign in with Apple → name → create a family → invite code shows; sync steps; start a walk (push should reach a second account's phone); react to a feed event; Me → sign out. First run ever against the real dev backend.
+- manual test (live app, past Home): user confirmed onboarding → Home works on their phone (2026-11-14). Still unchecked: walk push to a 2nd phone, reactions, sign out.
+- (T-31) TestFlight 0.1.0 (1): archived at ~/Library/Developer/Xcode/Archives/2026-11-14/HamroSteps-0.1.0-1.xcarchive; user uploads it from Xcode Organizer (upload is the user's) and sets up testers.
 - manual test (privacy link): on a phone, tap "Privacy policy" on Welcome and on Me → Safari opens the privacy page; check the Me row looks right (not seen on screen yet).
 - manual test (web pages): open web/invite/index.html?code=K7M2QX and web/privacy/index.html in Safari; check dark mode; founders review the DRAFT privacy text + set real contact email and TestFlight URL.
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
@@ -22,5 +23,5 @@ Usage band: green (the 5-hour window has reset since the last reading (23 min ag
 ## Waiting on Jarvis
 
 ## To-do
-- Left for TestFlight: TESTFLIGHT_URL in web/invite/index.html once TestFlight exists.
+- TESTFLIGHT_URL in web/invite/index.html (and InviteMessage.installURL in the app) once the user has a public TestFlight link.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.
