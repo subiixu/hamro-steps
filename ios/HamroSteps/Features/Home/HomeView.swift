@@ -43,7 +43,6 @@ struct HomeView: View {
                 }
                 // Room below the last card so the floating tab bar never sits on it.
                 .contentMargins(.bottom, 72, for: .scrollContent)
-                .defaultScrollAnchor(AppLaunch.homeScrollAnchor)
                 .background(.canvas)
                 .refreshable {
                     await stepSync.sync()
@@ -51,6 +50,12 @@ struct HomeView: View {
                     await feed?.load()
                 }
                 .onChange(of: focusCheck, initial: true) { showFocusedEvent(proxy) }
+                .task(id: home.week.isEmpty) {
+                    // Debug screenshots of the lower tiles (`-homeScroll`).
+                    guard let target = AppLaunch.homeScrollTarget, !home.week.isEmpty,
+                          (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
+                    proxy.scrollTo(target.id, anchor: target.anchor)
+                }
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
         }
@@ -157,7 +162,11 @@ struct HomeView: View {
 
     /// Overlapping avatars and how many are in the family: who this is for.
     private var togetherRow: some View {
-        HStack(spacing: 10) {
+        // Stacked at accessibility sizes, so the caption gets the full width.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 10))
+        return layout {
             AvatarStack(people: home.members.map { AvatarStack.Person(id: $0.userId, name: $0.name, hex: $0.avatarColor) })
             Group {
                 if home.members.count == 1 {
@@ -214,16 +223,18 @@ struct HomeView: View {
                 total: home.total, goal: home.goal, percent: home.percent,
                 fraction: home.ringFraction, reached: home.isGoalReached, members: members
             )
+            .id("today")
             if let walk {
-                WalkButton(controller: walk)
+                WalkButton(controller: walk).id("walk")
             }
-            halfTiles
+            halfTiles.id("status")
             ContributionsCard(members: members, currentUserId: session.user?.id, familyTotal: home.total)
+                .id("everyone")
             if !home.week.isEmpty {
-                WeekCard(days: home.week, today: home.today?.day)
+                WeekCard(days: home.week, today: home.today?.day).id("week")
             }
             if let feed {
-                FeedCard(model: feed, highlightedEventId: highlightedEventId)
+                FeedCard(model: feed, highlightedEventId: highlightedEventId).id("moments")
             }
         }
     }
@@ -699,7 +710,10 @@ struct WeekCard: View {
 struct WeekDayMarker: View {
     let day: FamilyWeekDay
     let isToday: Bool
-    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 36
+    @ScaledMetric(relativeTo: .body) private var scaledSize: CGFloat = 36
+    /// Capped so four markers still fit side by side on a narrow phone at the
+    /// largest text sizes.
+    private var size: CGFloat { min(scaledSize, 56) }
 
     private var date: Date? { NepalDay.start(of: day.day) }
 

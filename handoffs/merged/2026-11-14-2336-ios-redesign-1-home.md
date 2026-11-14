@@ -30,8 +30,15 @@ Make the app light mode only and restyle Home to match the approved canvas: flat
 - **One addition beyond the spec:** member rows also say "Walking now" in AccentText under the name, so the walking state is in words and not only in the small corner dot (parents, plain words). Drop it if the canvas is meant to be dot only.
 - **Debug-only launch flags for screenshots (HamroStepsApp.swift, all `#if DEBUG`):**
   - `-homeState walking|goal` wraps the mock family service so the signed-in user is out walking, or today's steps pass the goal.
-  - `-homeScroll center|bottom` opens Home scrolled down.
+  - `-homeScroll <tile>[:end]` scrolls Home to a tile once it has loaded (today, walk, status, everyone, week, moments; `:end` brings the tile's bottom into view). The tiles carry matching `.id`s.
   - A `-screen home` launch no longer shows the notification prompt (`SilentPushAuthorizer`), because it covered the screenshots.
+- **Review fixes (handoffs/reviews/2026-11-14-2336-ios-redesign-1-home-second.md):**
+  1. This week: "Goal reached on N days" keeps `.fixedSize()` only in the side-by-side branch, so `ViewThatFits` still checks whether it fits on one line. In the stacked fallback it is `fixedSize(horizontal: false, vertical: true)`, so it wraps.
+  2. `ActivityWrapLayout` (ActivitySupport.swift) now proposes the row's width to any child whose natural width is wider, for both measuring and placing. A single chip wraps its text inside the tile instead of overflowing. This also covers the reaction chips.
+- **Also fixed, found while checking accessibility XXXL on the iPhone SE:**
+  - The header's avatars and "N walking together" stack at accessibility sizes. Before, the caption broke mid-word beside the avatars.
+  - This week markers are capped at 56pt, so four fit side by side. Before, they overlapped.
+  - "I'm walking" stays on one line (`minimumScaleFactor(0.6)`). Before, it broke across lines.
 
 ## Files
 - ios/project.yml — modified (shared: one line, `INFOPLIST_KEY_UIUserInterfaceStyle: Light`)
@@ -62,22 +69,34 @@ Make the app light mode only and restyle Home to match the approved canvas: flat
 - handoffs/screens/2026-11-14-home-walking.png — created
 - handoffs/screens/2026-11-14-home-goal.png — created
 - handoffs/screens/2026-11-14-home-axl.png — created
+- handoffs/screens/2026-11-14-home-axl-everyone.png — created
+- handoffs/screens/2026-11-14-home-axl-week.png — created
+- handoffs/screens/2026-11-14-home-se-axxxl-top.png — created
+- handoffs/screens/2026-11-14-home-se-axxxl-today-end.png — created
+- handoffs/screens/2026-11-14-home-se-axxxl-walk.png — created
+- handoffs/screens/2026-11-14-home-se-axxxl-week.png — created
 - handoffs/2026-11-14-2336-ios-redesign-1-home.md — created
 
 ## Checks run
-`ultron check`: passed · 2 of 2 passed · 1m 01s
-- `scripts/check-ios.sh` · passed · 57.5 s
-- `scripts/check-backend.sh` · passed · 3.6 s
+`ultron check`: passed · 2 of 2 passed · 1m 00s
+- `scripts/check-ios.sh` · passed · 56.8 s
+- `scripts/check-backend.sh` · passed · 3.4 s
+
+(Rerun after the review fixes; the first run, before them, also passed.)
 
 Also:
 - AssetTests now also checks AccentText, SecondaryText and GoalText, plus a new test that every colour resolves the same in light and dark (no dark variants left).
 - Screenshots on an iPhone 17 Pro simulator (iOS 26.5), `-screen home -mockSteps`:
-  - idle (top, and scrolled to the middle with `-homeScroll center` for Everyone today, This week and Family moments)
+  - idle (top, and scrolled to the middle for Everyone today, This week and Family moments)
   - `-homeState walking`
   - `-homeState goal`
-  - accessibility XL text (top only)
+  - accessibility XL text: the top, plus the lower tiles (`-homeScroll everyone`, `-homeScroll week`)
+- After the review: accessibility XXXL on the narrowest supported phone, iPhone SE (3rd generation, 375pt, iOS 26.5):
+  - the header, the end of the Today tile (chips wrap inside the tile), "I'm walking", This week (the summary wraps when stacked, markers don't overlap), Status/Sync and Everyone today
+  - all fit with nothing cut off
+  - the SE header, Today, walk and week shots are saved; Status/Sync and Everyone today were checked but not saved
 - Not checked:
-  - the bottom of Home and the lower tiles at accessibility XL (only the top was shot)
+  - Family moments at XXXL on the SE
   - VoiceOver on a device
   - a real Convex launch (the layout doesn't depend on the backend)
   - the design canvas artifact: I worked from the brief's spec and didn't open it

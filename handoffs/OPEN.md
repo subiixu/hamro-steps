@@ -17,12 +17,10 @@ Usage band: green (the 5-hour window has reset since the last reading (307 min a
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-- 2026-11-14 23:20 · claude/claude-opus-5-5 high · term s_464558c6 · handoffs/briefs/2026-11-14-2040-ios-redesign-1-system-home.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
-- iOS redesign phase 1 handed off (handoffs/2026-11-14-2336-ios-redesign-1-home.md, checks green); sent back to s_464558c6 for the 2 large-text fixes from the second opinion (Has concerns). Once it re-hands off: re-run `ultron review second`, then merge. When it merges, spawn handoffs/briefs/2026-11-14-2041-ios-redesign-2-screens.md --after handoffs/merged/<phase-1 handoff>. Design: https://claude.ai/artifact/B24MPUiweEWxkdJ1Muuzbi. Real photos wait on licensed images (out of scope).
 
 ## To-do
 - `handoffs/bin/jarvis send`/`read <id>` print the usage text instead of acting (seen 2026-11-14); use `ultron term send/read` meanwhile.

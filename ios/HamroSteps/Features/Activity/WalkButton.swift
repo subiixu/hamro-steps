@@ -149,6 +149,9 @@ struct WalkButton: View {
                     }
                     Text("I'm walking")
                         .font(.title3.weight(.bold))
+                        // One line even at the largest sizes on a narrow phone.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                 }
                 // The glass style adds about 12pt of padding: 60pt in all.
                 .frame(maxWidth: .infinity, minHeight: 48)

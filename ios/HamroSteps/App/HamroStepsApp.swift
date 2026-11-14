@@ -107,7 +107,7 @@ extension EnvironmentValues {
 ///                         home, settings, me
 ///   -homeState <state>    with the mocks, for Home screenshots: `walking`
 ///                         (you're out on a walk) or `goal` (goal reached)
-///   -homeScroll <where>   open Home scrolled to `center` or `bottom`
+///   -homeScroll <tile>    open Home scrolled to a tile (`week`, `today:end`…)
 /// `-signedOut`, `-newUser` and `-screen` run on the in-memory mocks; without
 /// them the app runs on Convex.
 enum AppLaunch {
@@ -194,17 +194,17 @@ enum AppLaunch {
         return SystemPushAuthorizer()
     }
 
-    /// Debug `-homeScroll center|bottom`: where Home opens scrolled to, for
-    /// screenshots of the lower tiles. `nil` (the top) otherwise.
-    static var homeScrollAnchor: UnitPoint? {
+    /// Debug `-homeScroll <tile>[:end]`: once Home has loaded, scroll so that
+    /// tile's top (or with `:end`, its bottom) is in view, for screenshots of
+    /// the lower tiles at large text. Tiles: today, walk, status, everyone,
+    /// week, moments. `nil` (stay at the top) otherwise.
+    static var homeScrollTarget: (id: String, anchor: UnitPoint)? {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
         if let index = args.firstIndex(of: "-homeScroll"), args.indices.contains(index + 1) {
-            switch args[index + 1] {
-            case "center": return .center
-            case "bottom": return .bottom
-            default: return nil
-            }
+            let parts = args[index + 1].split(separator: ":")
+            guard let id = parts.first else { return nil }
+            return (String(id), parts.last == "end" ? .bottom : .top)
         }
         #endif
         return nil
