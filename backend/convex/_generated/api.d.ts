@@ -14,6 +14,7 @@ import type * as families from "../families.js";
 import type * as home from "../home.js";
 import type * as http from "../http.js";
 import type * as lib_access from "../lib/access.js";
+import type * as lib_activity from "../lib/activity.js";
 import type * as lib_apple from "../lib/apple.js";
 import type * as lib_cleanup from "../lib/cleanup.js";
 import type * as lib_constants from "../lib/constants.js";
@@ -23,8 +24,10 @@ import type * as lib_tokens from "../lib/tokens.js";
 import type * as lib_totals from "../lib/totals.js";
 import type * as lib_validate from "../lib/validate.js";
 import type * as sessions from "../sessions.js";
+import type * as status from "../status.js";
 import type * as steps from "../steps.js";
 import type * as users from "../users.js";
+import type * as walks from "../walks.js";
 
 import type {
   ApiFromModules,
@@ -39,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   home: typeof home;
   http: typeof http;
   "lib/access": typeof lib_access;
+  "lib/activity": typeof lib_activity;
   "lib/apple": typeof lib_apple;
   "lib/cleanup": typeof lib_cleanup;
   "lib/constants": typeof lib_constants;
@@ -48,8 +52,10 @@ declare const fullApi: ApiFromModules<{
   "lib/totals": typeof lib_totals;
   "lib/validate": typeof lib_validate;
   sessions: typeof sessions;
+  status: typeof status;
   steps: typeof steps;
   users: typeof users;
+  walks: typeof walks;
 }>;
 
 /**

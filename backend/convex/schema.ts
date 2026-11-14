@@ -124,4 +124,33 @@ export default defineSchema({
     .index("by_family_day", ["familyId", "day"])
     .index("by_user_day", ["userId", "day"])
     .index("by_user_family", ["userId", "familyId"]),
+
+  /**
+   * Walks (contract F9–F11). Per user, so a walk shows in every family they're
+   * in. Open while `endedAt` is unset and `endsAt` hasn't passed; a scheduled
+   * `walks.autoStop` sets `endedAt = endsAt` if nobody stopped it. `nepalDay`
+   * is the day it started, for the 3-per-day limit.
+   */
+  walks: defineTable({
+    userId: v.id("users"),
+    startedAt: v.number(),
+    endsAt: v.number(),
+    endedAt: v.optional(v.number()),
+    nepalDay: v.string(),
+  })
+    .index("by_user_open", ["userId", "endedAt"])
+    .index("by_user_day", ["userId", "nepalDay"]),
+
+  /**
+   * Status (contract F12): at most one row per user. Exactly one of `preset`
+   * and `text` is set. Reads as null once `expiresAt` has passed; the row is
+   * replaced on the next `setStatus` or removed by `clearStatus`.
+   */
+  statuses: defineTable({
+    userId: v.id("users"),
+    preset: v.optional(v.string()),
+    text: v.optional(v.string()),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 });

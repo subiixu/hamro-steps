@@ -12,7 +12,11 @@ export type ErrorCode =
   | "invalid_steps"
   | "invalid_day"
   | "cannot_remove_self"
-  | "invalid_token";
+  | "invalid_token"
+  | "already_walking"
+  | "walk_limit_reached"
+  | "invalid_status"
+  | "invalid_expiry";
 
 export function fail(code: ErrorCode, message?: string): never {
   throw new ConvexError({ code, ...(message ? { message } : {}) });

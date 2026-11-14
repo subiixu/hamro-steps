@@ -28,8 +28,8 @@ export const DEFAULT_BUNDLE_ID = "com.bixustudio.hamrosteps";
 
 /**
  * Waits before each retry of a failed Apple revoke after account deletion
- * (1 min, 10 min, 1 h, 6 h, then daily). After the last one the token is
- * dropped with an error log.
+ * (1 min, 10 min, 1 h, 6 h, then daily). After the last one the daily wait
+ * repeats forever: the token is kept until Apple confirms the revoke.
  */
 export const APPLE_REVOKE_RETRY_DELAYS_MS = [
   60_000,
@@ -40,3 +40,24 @@ export const APPLE_REVOKE_RETRY_DELAYS_MS = [
   24 * 60 * 60_000,
   24 * 60 * 60_000,
 ];
+
+/** A walk ends by itself this long after it starts (contract F9). */
+export const WALK_DURATION_MS = 2 * 60 * 60 * 1000;
+/** Walk starts allowed per user per Nepal day. */
+export const MAX_WALKS_PER_DAY = 3;
+
+/** Status presets, as the enum keys the app sends (contract F12). */
+export const STATUS_PRESETS = [
+  "at_work",
+  "at_home",
+  "commuting",
+  "working_out",
+  "on_a_hike",
+  "resting",
+  "travelling",
+] as const;
+export type StatusPreset = (typeof STATUS_PRESETS)[number];
+/** Max custom status length in UTF-16 code units (JS `.length`), after trimming. */
+export const MAX_STATUS_TEXT_LENGTH = 30;
+export const DEFAULT_STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+export const MAX_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;

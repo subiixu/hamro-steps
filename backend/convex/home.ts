@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { familyMembers, requireMember } from "./lib/access";
+import { activeStatus, openWalk } from "./lib/activity";
 import { MAX_MEMBERS } from "./lib/constants";
 import { nepalDay, nepalDayStart, weekDays } from "./lib/nepalDay";
 import { liveTotal, snapshot, stepsRow } from "./lib/totals";
@@ -13,7 +14,8 @@ export const familyToday = query({
   args: { familyId: v.id("families") },
   handler: async (ctx, args) => {
     const { family } = await requireMember(ctx, args.familyId);
-    const day = nepalDay(Date.now());
+    const now = Date.now();
+    const day = nepalDay(now);
     const memberships = await familyMembers(ctx, family._id);
     let total = 0;
     const members = [];
@@ -22,6 +24,7 @@ export const familyToday = query({
       if (!user) continue;
       const row = await stepsRow(ctx, m.userId, day);
       total += row?.steps ?? 0;
+      const walk = await openWalk(ctx, m.userId, now);
       members.push({
         userId: user._id,
         name: user.name ?? null,
@@ -30,7 +33,11 @@ export const familyToday = query({
         isOrganiser: family.organiserId === user._id,
         steps: row ? row.steps : null,
         lastSyncedAt: user.lastSyncedAt ?? null,
-        status: null, // phase 2
+        /** Open walk (not stopped, not past endsAt), else null. */
+        walkingSince: walk ? walk.startedAt : null,
+        walkEndsAt: walk ? walk.endsAt : null,
+        /** Null when none or expired. */
+        status: await activeStatus(ctx, m.userId, now),
       });
     }
     const goal = family.dailyGoal;

@@ -8,8 +8,8 @@ import { recomputeSnapshot } from "./totals";
  * their contributions to its closed days (each day's total and hit are
  * recomputed; the goal stays frozen). Their dailySteps rows are per user, so
  * they simply stop counting toward this family's today.
- * Phase 2: delete their walks, status, feed events and reactions in this
- * family here too.
+ * Walks and status are per user, not per family, so nothing to do for them.
+ * Phase 2: delete their feed events and reactions in this family here.
  *
  * If they were the organiser, the earliest-joined remaining member (lowest
  * position) takes over. If nobody is left, the family is deleted.
@@ -52,7 +52,7 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
     .withIndex("by_family_day", (q) => q.eq("familyId", familyId))
     .collect();
   for (const c of contributions) await ctx.db.delete(c._id);
-  // Phase 2: delete the family's walks, feed events and reactions here.
+  // Phase 2: delete the family's feed events and reactions here.
   await ctx.db.delete(familyId);
 }
 
@@ -60,7 +60,8 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
  * Deletes a user and every row they own: memberships (with organiser
  * hand-off, and their closed-day contributions), steps, sessions, refresh tokens, Apple token. Returns Apple's
  * refresh token, if one was stored, so the caller can revoke it.
- * Phase 2: also delete their devices, mutes, walks, statuses and reactions.
+ * Also their walks (a pending autoStop then finds nothing) and status.
+ * Phase 2: also delete their devices, mutes and reactions.
  */
 export async function deleteUserData(
   ctx: MutationCtx,
@@ -93,6 +94,16 @@ export async function deleteUserData(
   }
   for await (const row of ctx.db
     .query("sessions")
+    .withIndex("by_user", (q) => q.eq("userId", userId))) {
+    await ctx.db.delete(row._id);
+  }
+  for await (const row of ctx.db
+    .query("walks")
+    .withIndex("by_user_open", (q) => q.eq("userId", userId))) {
+    await ctx.db.delete(row._id);
+  }
+  for await (const row of ctx.db
+    .query("statuses")
     .withIndex("by_user", (q) => q.eq("userId", userId))) {
     await ctx.db.delete(row._id);
   }
