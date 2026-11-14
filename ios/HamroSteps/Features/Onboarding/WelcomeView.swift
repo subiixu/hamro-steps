@@ -52,6 +52,9 @@ struct WelcomeView: View {
                     .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                     .frame(height: 56)
                     .clipShape(.capsule)
+                    Link("Privacy policy", destination: URL(string: "https://subiixu.github.io/hamro-steps/privacy/")!)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondaryText)
                     #if DEBUG
                     Button("Use the sample account (debug)") {
                         signIn(token: "debug-token", code: "debug-code", name: nil)

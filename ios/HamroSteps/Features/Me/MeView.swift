@@ -43,6 +43,10 @@ struct MeView: View {
                     } label: {
                         Label { Text("Notifications") } icon: { Icon.notification.image }
                     }
+                    Link(destination: URL(string: "https://subiixu.github.io/hamro-steps/privacy/")!) {
+                        Label { Text("Privacy policy") } icon: { Icon.health.image }
+                    }
+                    .foregroundStyle(.primary)
                 }
 
                 Section {
