@@ -14,22 +14,20 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-- 2026-11-14 14:35 · claude/claude-opus-5-5 high · term s_d15669fa · handoffs/briefs/2026-11-14-1415-convex-core.md
+- 2026-11-14 14:39 · claude/claude-opus-5-5 medium · term s_253ca1b2 · handoffs/briefs/2026-11-14-1615-ios-model-fixes.md
+- 2026-11-14 14:39 · claude/claude-opus-5-5 medium · term s_d484ac05 · handoffs/briefs/2026-11-14-1615-ios-activity-placement.md
 - 2026-11-14 14:06 · codex/gpt-6-astra high · term s_9dd4f84f · handoffs/briefs/2026-11-14-1440-app-icon.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
-- ios-visual-fix done (checks green, screenshots ok) → merge right after ios-home-logic-fix.
 - convex-core redo #2 (s_d15669): Apple revoke queue must keep tokens until revoked + recovery cron. Then fresh second opinion → merge (--anyway if iOS check red from WIP) → spawn backend phase 2.
-- ios-activity-ui (isolated, done, 62 tests): second opinion Has concerns (3 should-fix: notification toggle overlap, reaction overlap revert, walk limit not clearing at Nepal midnight → fold into iOS phase 4); merge AFTER ios-home-logic-fix merges (Icon.swift uncommitted in main). Then add `.activityGalleryOnLaunch()` after `.background(.canvas)` in RootView (or leave for iOS phase 4).
-- ios-home-mock partial: second opinion Blocking → fixes split: ios-home-logic-fix (its handoff lists ALL home-mock files; merge it first) + ios-visual-fix (merge second).
 
 ## To-do
 - PRD = docs/PRD.md (backend Convex, invites code-first for pilot). Tasks T-4…T-10. Supabase work dropped (archived ~/.jarvis-archive/hamro-steps/).
-- Backend phase 2 — spawn the moment convex-core merges (--after it), implementing docs/contract-activity.md: walks (F9–F11), status (F12), feed auto-events + 5 reactions (F13–F14), APNs action + device tokens + per-type mutes + evening nudge (F15–F16). T-7…T-10. APNs key/env = user supplies; never to free models.
-- iOS phase 3 (after convex-core AND ios-home-mock merge): wire ConvexMobile (convex-swift SPM, Jarvis approves) + auth endpoints, replace mock service; background delivery sync.
-- iOS phase 4 (after ios-home-mock + ios-activity-ui merge; real service after backend phase 2): place activity components into Home/member rows/Me, push registration + routing.
+- Backend phase 2 — spawn the moment convex-core merges (--after it), split in 3 narrow briefs run sequentially (schema.ts shared): 2a walks+status (+familyToday fields), 2b feed+reactions, 2c push/devices/prefs/nudge. Contract docs/contract-activity.md: walks (F9–F11), status (F12), feed auto-events + 5 reactions (F13–F14), APNs action + device tokens + per-type mutes + evening nudge (F15–F16). T-7…T-10. APNs key/env = user supplies; never to free models.
+- iOS phase 3 (after convex-core merges; ios-home-mock merged ✓): wire ConvexMobile (convex-swift SPM, Jarvis approves) + auth endpoints, replace mock service; background delivery sync.
+- iOS phase 4a placement + model fixes RUNNING. Then: push registration/routing (after backend 2c). ios-model-fixes handoff names a HamroStepsApp.swift line to switch reload()→refresh() — apply after placement merges.
 - Host web/ (invite + privacy) somewhere — user picks host; TestFlight URL + privacy email placeholders to fill.
 - App icon (codex) → Jarvis installs design/app-icon into ios AppIcon.appiconset after merge.
 - User setup before device testing: Apple Developer team id + SIWA capability, Convex project (user creates/logs in), APNs key, privacy policy URL before TestFlight.
