@@ -16,7 +16,6 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 ## Running workers
 - 2026-11-14 14:53 · claude/claude-opus-5-5 high · term s_bba8a050 · handoffs/briefs/2026-11-14-1715-convex-push.md
 - 2026-11-14 14:40 · claude/claude-opus-5-5 high · term s_07720fdd · handoffs/briefs/2026-11-14-1630-ios-convex-client.md · isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-convex-client · branch: jw/ios-convex-client
-- 2026-11-14 14:39 · claude/claude-opus-5-5 medium · term s_253ca1b2 · handoffs/briefs/2026-11-14-1615-ios-model-fixes.md
 - 2026-11-14 14:06 · codex/gpt-6-astra high · term s_9dd4f84f · handoffs/briefs/2026-11-14-1440-app-icon.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->

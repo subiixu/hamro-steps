@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Loads and saves the 4 notification switches. A switch moves at once and
-/// moves back if saving fails.
+/// Loads and saves the 4 notification switches. A switch moves at once, is
+/// disabled until its save finishes, and moves back if saving fails, so
+/// saves for one switch never overlap.
 @MainActor @Observable
 final class NotificationSettingsModel {
     enum Phase: Equatable { case loading, loaded, failed }
@@ -9,6 +10,8 @@ final class NotificationSettingsModel {
     private(set) var prefs = NotificationPrefs.defaults
     private(set) var phase: Phase = .loading
     private(set) var saveFailed = false
+    /// Switches with a save in flight.
+    private(set) var saving: Set<NotificationKind> = []
 
     @ObservationIgnored private let service: any ActivityService
 
@@ -26,9 +29,13 @@ final class NotificationSettingsModel {
         }
     }
 
+    func isSaving(_ kind: NotificationKind) -> Bool { saving.contains(kind) }
+
     func set(_ kind: NotificationKind, to value: Bool) async {
         let before = prefs[kind]
-        guard before != value else { return }
+        guard before != value, !saving.contains(kind) else { return }
+        saving.insert(kind)
+        defer { saving.remove(kind) }
         prefs[kind] = value
         saveFailed = false
         do {
@@ -91,6 +98,7 @@ struct NotificationSettingsView: View {
                             .padding(.vertical, 6)
                         }
                         .tint(.accent)
+                        .disabled(model.isSaving(kind))
                     }
                 } header: {
                     HStack(spacing: 6) {

@@ -28,11 +28,20 @@ final class HomeModel {
     /// The running `familyTodayUpdates` loop, cancelled to re-subscribe.
     @ObservationIgnored private var subscription: Task<Void, Never>?
     @ObservationIgnored private var resubscribeRequested = false
+    /// Sleeps until the next Nepal midnight; replaced on every time change.
+    @ObservationIgnored private var midnightTimer: Task<Void, Never>?
+    private let sleep: @Sendable (Duration) async throws -> Void
 
-    init(service: any FamilyService, defaults: UserDefaults = .standard, now: @escaping @Sendable () -> Date = { .now }) {
+    init(
+        service: any FamilyService,
+        defaults: UserDefaults = .standard,
+        now: @escaping @Sendable () -> Date = { .now },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
         self.service = service
         self.defaults = defaults
         self.now = now
+        self.sleep = sleep
         selectedFamilyId = defaults.string(forKey: Self.selectedKey)
     }
 
@@ -160,6 +169,14 @@ final class HomeModel {
         await reload()
     }
 
+    /// After a successful step sync: reload and re-open the live
+    /// subscription. A plain `reload()` could advance `loadedDay` past
+    /// midnight while the subscription stays pinned to yesterday, and then
+    /// `refreshIfDayChanged()` would never re-open it.
+    func syncFinished() async {
+        await refresh()
+    }
+
     /// Refreshes if the Nepal day moved on since the week was loaded (the
     /// midnight timer fired, or the clock or time zone changed).
     func refreshIfDayChanged() async {
@@ -171,27 +188,32 @@ final class HomeModel {
     /// on significant time changes, and refreshes when the day moved on.
     /// Ends when the task is cancelled.
     func watchDayChanges(timeChanges: AsyncStream<Void>) async {
-        let timer = Task { [weak self] in
+        scheduleMidnight()
+        for await _ in timeChanges {
+            // The clock jumped: the old wait was measured from the old time.
+            scheduleMidnight()
+            await refreshIfDayChanged()
+        }
+        guard !Task.isCancelled, let timer = midnightTimer else {
+            midnightTimer?.cancel()
+            midnightTimer = nil
+            return
+        }
+        await withTaskCancellationHandler { await timer.value } onCancel: { timer.cancel() }
+    }
+
+    /// Cancels the pending midnight wait and starts one measured from now.
+    private func scheduleMidnight() {
+        midnightTimer?.cancel()
+        midnightTimer = Task { [weak self, sleep] in
             while !Task.isCancelled {
                 guard let self else { return }
                 let wait = Self.nextNepalMidnight(after: self.now()).timeIntervalSince(self.now())
                 // A second late, so the new day has surely begun.
-                try? await Task.sleep(for: .seconds(max(wait, 0) + 1))
+                do { try await sleep(.seconds(max(wait, 0) + 1)) } catch { return }
                 guard !Task.isCancelled else { return }
                 await self.refreshIfDayChanged()
             }
-        }
-        let changes = Task { [weak self] in
-            for await _ in timeChanges {
-                await self?.refreshIfDayChanged()
-            }
-        }
-        await withTaskCancellationHandler {
-            await timer.value
-            await changes.value
-        } onCancel: {
-            timer.cancel()
-            changes.cancel()
         }
     }
 

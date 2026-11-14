@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Loads a family's feed and sends reactions. A reaction shows at once and
-/// is put back if the server refuses it.
+/// Loads a family's feed and sends reactions. A reaction shows at once.
+/// Reactions to one event go to the server one at a time; the shown event is
+/// always the last confirmed one with the still-pending taps on top, so a
+/// refused tap drops out without undoing a later one.
 @MainActor @Observable
 final class FeedModel {
     enum Phase: Equatable { case loading, loaded, failed }
@@ -12,6 +14,10 @@ final class FeedModel {
     let familyId: String
     let viewerId: String?
     @ObservationIgnored private let service: any ActivityService
+    /// Per event with reactions in flight: the server-confirmed event, and
+    /// the taps not yet confirmed (the first one is being sent).
+    @ObservationIgnored private var confirmed: [String: FeedEvent] = [:]
+    @ObservationIgnored private var pending: [String: [Reaction]] = [:]
 
     init(service: any ActivityService, familyId: String, viewerId: String?) {
         self.service = service
@@ -22,7 +28,13 @@ final class FeedModel {
     func load() async {
         if events.isEmpty { phase = .loading }
         do {
-            events = try await service.feed(familyId: familyId).filter(\.isDisplayable)
+            let loaded = try await service.feed(familyId: familyId).filter(\.isDisplayable)
+            // Events with reactions in flight keep their local state; the
+            // server copy may or may not include the tap being sent.
+            let local = Dictionary(events.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            events = loaded.map { event in
+                pending[event.id] != nil ? (local[event.id] ?? event) : event
+            }
             phase = .loaded
         } catch {
             phase = .failed
@@ -33,10 +45,31 @@ final class FeedModel {
         guard let index = events.firstIndex(where: { $0.id == eventId }) else { return }
         let before = events[index]
         events[index] = before.reacting(with: emoji)
-        do {
-            try await service.react(eventId: eventId, emoji: emoji)
-        } catch {
-            if let i = events.firstIndex(where: { $0.id == eventId }) { events[i] = before }
+        if pending[eventId] != nil {
+            // A tap is being sent for this event; this one goes after it.
+            pending[eventId]?.append(emoji)
+            return
+        }
+        confirmed[eventId] = before
+        pending[eventId] = [emoji]
+        defer {
+            pending[eventId] = nil
+            confirmed[eventId] = nil
+        }
+        while let next = pending[eventId]?.first, var base = confirmed[eventId] {
+            do {
+                try await service.react(eventId: eventId, emoji: next)
+                base = base.reacting(with: next)
+                confirmed[eventId] = base
+            } catch {
+                // Refused: the tap drops out; later taps still apply.
+            }
+            pending[eventId]?.removeFirst()
+            let remaining = pending[eventId] ?? []
+            if let i = events.firstIndex(where: { $0.id == eventId }) {
+                events[i] = remaining.reduce(base) { $0.reacting(with: $1) }
+            }
+            if remaining.isEmpty { return }
         }
     }
 }
@@ -64,8 +97,8 @@ struct FeedList: View {
                 retry
             case .loaded:
                 VStack(spacing: 10) {
-                    Icon.cheer.size(32)
-                        .foregroundStyle(.cheer)
+                    Icon.celebrate.size(32)
+                        .foregroundStyle(.goal)
                     Text("Nothing here yet today. When someone passes 5,000 steps or starts a walk, you'll see it here.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

@@ -27,36 +27,74 @@ enum WalkNotice: Equatable, Sendable {
 final class WalkController {
     private(set) var walk: ActiveWalk?
     private(set) var isWorking = false
-    private(set) var notice: WalkNotice?
+    private var storedNotice: WalkNotice?
+    /// When the service said `walk_limit_reached`; the limit resets at the
+    /// next Nepal midnight.
+    private var limitReachedAt: Date?
 
     @ObservationIgnored private let service: any ActivityService
+    @ObservationIgnored private let now: @Sendable () -> Date
 
-    init(service: any ActivityService, walk: ActiveWalk? = nil, notice: WalkNotice? = nil) {
+    init(
+        service: any ActivityService,
+        walk: ActiveWalk? = nil,
+        notice: WalkNotice? = nil,
+        now: @escaping @Sendable () -> Date = { .now }
+    ) {
         self.service = service
         self.walk = walk
-        self.notice = notice
+        self.now = now
+        self.storedNotice = notice
+        if notice == .limitReached { limitReachedAt = now() }
+    }
+
+    /// The limit notice only lasts until Nepal midnight, when the daily
+    /// allowance resets.
+    var notice: WalkNotice? {
+        if storedNotice == .limitReached, !limitIsToday { return nil }
+        return storedNotice
+    }
+
+    private var limitIsToday: Bool {
+        guard let limitReachedAt else { return false }
+        return ActivityTime.nepalCalendar.isDate(limitReachedAt, inSameDayAs: now())
+    }
+
+    /// Drops a limit notice from an earlier Nepal day. Runs on every sync and
+    /// before starting; call it on foreground too.
+    func expireStaleNotice() {
+        guard storedNotice == .limitReached, !limitIsToday else { return }
+        storedNotice = nil
+        limitReachedAt = nil
+    }
+
+    private func show(_ notice: WalkNotice?) {
+        storedNotice = notice
+        limitReachedAt = notice == .limitReached ? now() : nil
     }
 
     /// Keeps in step with `familyToday` (the viewer's `walkingSince` and
     /// `walkEndsAt`).
     func sync(walkingSince: EpochMillis?, walkEndsAt: EpochMillis?) {
         walk = ActiveWalk(walkingSince: walkingSince, walkEndsAt: walkEndsAt)
-        if walk != nil, notice == .alreadyWalking { notice = nil }
+        expireStaleNotice()
+        if walk != nil, storedNotice == .alreadyWalking { show(nil) }
     }
 
     func start() async {
+        expireStaleNotice()
         guard !isWorking else { return }
         isWorking = true
         defer { isWorking = false }
         do {
             walk = ActiveWalk(try await service.startWalk())
-            notice = nil
+            show(nil)
         } catch ActivityError.walkLimitReached {
-            notice = .limitReached
+            show(.limitReached)
         } catch ActivityError.alreadyWalking {
-            notice = .alreadyWalking
+            show(.alreadyWalking)
         } catch {
-            notice = .failed
+            show(.failed)
         }
     }
 
@@ -67,9 +105,9 @@ final class WalkController {
         do {
             try await service.stopWalk()
             walk = nil
-            if notice != .limitReached { notice = nil }
+            if notice != .limitReached { show(nil) }
         } catch {
-            notice = .failed
+            show(.failed)
         }
     }
 }

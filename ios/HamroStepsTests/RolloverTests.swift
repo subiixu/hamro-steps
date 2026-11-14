@@ -184,4 +184,59 @@ struct MockClosedDayTests {
         #expect(fresh.isBeforeFamily)
         #expect(fresh.total == 0)
     }
+
+    // Review 1545 finding 1: leaving, removal and account deletion take the
+    // user's closed-day contributions with them, and later syncs stay out.
+
+    @Test func leavingTakesClosedDayStepsAndLaterSyncsStayOut() async throws {
+        let clock = TestClock(TestTime.date("Asia/Kathmandu", 2026, 11, 11, 12))
+        let service = MockFamilyService.sample(signedIn: true, now: clock.read)
+        let before = try day(try await service.familyWeek(familyId: "f_cousins"), "2026-11-10").total
+        try await service.syncSteps(days: [StepDay(day: "2026-11-10", steps: 4_000)])
+        #expect(try day(try await service.familyWeek(familyId: "f_cousins"), "2026-11-10").total == before + 4_000)
+
+        try await service.leaveFamily(familyId: "f_cousins")
+        // Rejoining today doesn't put Priya back into Tuesday's close.
+        _ = try await service.joinFamily(code: "P4RT8N")
+        #expect(try day(try await service.familyWeek(familyId: "f_cousins"), "2026-11-10").total == before)
+        let tuesday = try day(try await service.familyWeek(familyId: "f_cousins"), "2026-11-10")
+        #expect(tuesday.goal == 30_000)
+
+        let thapaBefore = try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total
+        try await service.syncSteps(days: [StepDay(day: "2026-11-10", steps: 6_000)])
+        #expect(try day(try await service.familyWeek(familyId: "f_cousins"), "2026-11-10").total == before)
+        #expect(try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total == thapaBefore + 2_000)
+    }
+
+    @Test func removalTakesClosedDayStepsAndLaterSyncsStayOut() async throws {
+        let clock = TestClock(TestTime.date("Asia/Kathmandu", 2026, 11, 11, 12))
+        let service = MockFamilyService.sample(signedIn: true, now: clock.read)
+        let before = try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total
+        await service.actAs("u_aama")
+        try await service.syncSteps(days: [StepDay(day: "2026-11-10", steps: 3_000)])
+        await service.actAs(MockFamilyService.sampleUserId)
+        #expect(try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total == before + 3_000)
+
+        try await service.removeMember(familyId: "f_thapa", userId: "u_aama")
+        #expect(try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total == before)
+        #expect(try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").goal == 50_000)
+
+        await service.actAs("u_aama")
+        try await service.syncSteps(days: [StepDay(day: "2026-11-10", steps: 7_000)])
+        await service.actAs(MockFamilyService.sampleUserId)
+        #expect(try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total == before)
+    }
+
+    @Test func deletingAnAccountTakesItsClosedDaySteps() async throws {
+        let clock = TestClock(TestTime.date("Asia/Kathmandu", 2026, 11, 11, 12))
+        let service = MockFamilyService.sample(signedIn: true, now: clock.read)
+        let before = try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10").total
+        await service.actAs("u_aama")
+        try await service.syncSteps(days: [StepDay(day: "2026-11-10", steps: 3_000)])
+        try await service.deleteMyAccount()
+        await service.actAs(MockFamilyService.sampleUserId)
+        let tuesday = try day(try await service.familyWeek(familyId: "f_thapa"), "2026-11-10")
+        #expect(tuesday.total == before)
+        #expect(tuesday.goal == 50_000)
+    }
 }
