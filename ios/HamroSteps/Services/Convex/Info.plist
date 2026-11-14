@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Merged with the keys Xcode generates (GENERATE_INFOPLIST_FILE). Only the
+     Convex URLs live here: Xcode can't generate custom keys. Values come from
+     the CONVEX_URL / CONVEX_SITE_URL build settings in project.yml. -->
+<dict>
+	<key>ConvexURL</key>
+	<string>$(CONVEX_URL)</string>
+	<key>ConvexSiteURL</key>
+	<string>$(CONVEX_SITE_URL)</string>
+</dict>
+</plist>

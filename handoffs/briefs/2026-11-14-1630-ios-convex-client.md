@@ -2,9 +2,9 @@
 worker: claude
 model: claude-opus-5-5
 effort: high
-started: 2026-11-14 15:17 · terminal: s_19a93bf3
+started: 2026-11-14 15:35 · terminal: s_21a6035f
 redo: handoffs/2026-11-14-1510-ios-convex-client.md
-why: Second opinion Blocking (handoffs/reviews/2026-11-14-1510-ios-convex-client-second.md): fix all 3 findings with tests (SDK loginFromCache must force refresh; sign-out vs concurrent refresh race; retry failed Keychain write of rotated refresh token). Rebase note: main already fixed the Icon clock/cheer break.
+why: Redo 2: second opinion (15:34) still Blocking. 1) performRefresh must check captured generation BEFORE reading storage/calling /auth/refresh (keep post-response check); test queued refresh starting after a replacement sign-in. 2) Keychain delete failure in signOut must not be swallowed: stay invalidated until deletion succeeds, retry, persist a signed-out marker so restart can't restore session/cached user; test failed removal + offline logout, recovery, restart. Add a 'Redo 2' section.
 isolate: /Users/subixu/.jarvis-worktrees/hamro-steps/ios-convex-client · branch: jw/ios-convex-client
 Tasks: T-4, T-5, T-6
 files: ios/project.yml, ios/HamroSteps/Services/Convex/**, ios/HamroStepsTests/Convex*.swift

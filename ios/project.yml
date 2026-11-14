@@ -27,11 +27,16 @@ settings:
     # Colours and icons go through the typed wrappers in Shared/UI.
     ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
     ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+    # ConvexMobile's Rust core ships no x86_64 simulator slice.
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
 
 packages:
   LibrariesDev:
     url: https://github.com/Jakubantalik/Libraries.dev
     branch: main
+  ConvexMobile:
+    url: https://github.com/get-convex/convex-swift
+    exactVersion: 0.8.2
 
 targets:
   HamroSteps:
@@ -43,6 +48,8 @@ targets:
     dependencies:
       - package: LibrariesDev
         product: ThinkingOrbsKit
+      - package: ConvexMobile
+        product: ConvexMobile
       - sdk: HealthKit.framework
       - sdk: AuthenticationServices.framework
     # XcodeGen rewrites the .entitlements file from these properties on
@@ -60,6 +67,13 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.bixustudio.hamrosteps
         PRODUCT_NAME: HamroSteps
         GENERATE_INFOPLIST_FILE: YES
+        # Custom keys (the Convex URLs) merged into the generated Info.plist.
+        INFOPLIST_FILE: HamroSteps/Services/Convex/Info.plist
+        # Placeholders: set the real deployment per environment (Xcode build
+        # setting or an xcconfig). While they contain "placeholder" the app
+        # treats Convex as not configured (ConvexConfig returns nil).
+        CONVEX_URL: https://placeholder.convex.cloud
+        CONVEX_SITE_URL: https://placeholder.convex.site
         INFOPLIST_KEY_CFBundleDisplayName: Hamro Steps
         INFOPLIST_KEY_NSHealthShareUsageDescription: Hamro Steps reads your step count to share it with your family.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
