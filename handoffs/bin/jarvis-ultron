@@ -1,0 +1,1783 @@
+#!/usr/bin/env bash
+# jarvis — the routine steps of the Jarvis workflow, one command each, so the
+# coordinator spends its turns on judgement instead of bookkeeping.
+#
+#   jarvis start                       claim this session as Jarvis in OPEN.md, then status
+#   jarvis status                      band, workers, new handoffs, git — one short screen
+#   jarvis spawn <brief.md> [--after <handoff> | --redo <handoff> [--why "<line>"]] [--force]
+#                [--isolate [--no-terminal]]
+#                                      lint, enforce the band and the worker cap, spawn, record
+#                                      (--after: the next phase; --redo: sent back after review,
+#                                      --why: the reason, written as why: in the brief's header;
+#                                      --isolate or `isolate: yes` in the header: the worker gets
+#                                      its own git worktree on branch jw/<slug>; --no-terminal
+#                                      makes the worktree without starting a worker; refuses, without
+#                                      --force, a non-isolated brief whose files: overlap a running
+#                                      non-isolated worker's; passes a fixed --request-id, so a
+#                                      retried spawn never starts a second worker)
+#                [--answers <file> [--blocked <handoff>] [--settled]]
+#                                      (--answers: a fresh worker on an answered brief: appends
+#                                      the answers and the blocked handoff to the brief, closes
+#                                      the old worker; --settled: the answers settle the design,
+#                                      so model: fable becomes claude-opus-5-5)
+#   jarvis answer <blocked-handoff.md> <answers-file> [--settled] [--fresh]
+#                                      answer a blocked worker: typed into it while its context is
+#                                      at most 80k tokens (JARVIS_FRESH_AFTER), else (--fresh, or the
+#                                      worker is gone) spawn --answers: a fresh worker on the brief
+#   jarvis merge <handoff.md> --check  file list vs git status, diff stat, checks; changes nothing
+#   jarvis merge <handoff.md> [-m <msg>] [--outcome <o>] [--no-push] [--keep-open] [--force]
+#                [--skip-second-opinion "<reason>"]  (merge without the second opinion the
+#                                      project's policy wants; logged in the handoff)
+#                [--anyway "<reason>"] (merge despite red checks; logged in the handoff)
+#                                      commit exactly the listed files + the handoff move,
+#                                      push, close the worker, update OPEN.md; refuses red
+#                                      checks (Ultron's run on the handoff, else the brief's
+#                                      last `ultron check`; --force doesn't override them)
+#                                      (isolated: commit on jw/<slug>, git merge it here; a
+#                                      conflict writes a merge brief and changes nothing here)
+#   jarvis clean-worktrees             remove isolated worktrees + jw/* branches whose handoff
+#                                      is merged and no worker is running; list the rest
+#   jarvis events                      one "[jarvis event] …" line per handoff or worker trouble,
+#                                      until killed: Jarvis runs it under Claude Code's Monitor tool
+#
+# A branch Jarvis (in a worktree: $ULTRON_WORKTREE_ID is set) has its own OPEN.md, workers,
+# worker cap and events; its merges commit to its branch and push that branch.
+#   jarvis band                        the usage band from the latest statusline reading
+#   jarvis screen <session> [lines]    a session's screen, or a chat session's conversation (jev.sh uses it)
+#   jarvis usage [--days N | --since DATE]
+#                                      coordinating vs building, from local transcripts
+#   jarvis hook prompt                 UserPromptSubmit guard (from .claude/settings.json)
+#   jarvis statusline                  statusline tap: saves the 5-hour reading, then runs yours
+#
+# Settings live in handoffs/jarvis.conf. Works on the stock macOS bash (3.2).
+# jq is needed for spawn, the hooks and the band; everything fails open without it.
+# Sessions are driven through the `ultron` CLI. Ported from jarvis 0.3.1 (MIT, Gorock);
+# PORTING.md in the Ultron repo's kits/jarvis/ lists what changed and what the CLI still lacks.
+# This is the Ultron host's script; handoffs/bin/jarvis picks it or jarvis-superset. Both
+# share OPEN.md, and each leaves alone a Jarvis of the other host (Superset ids are UUIDs).
+set -u
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd "$ROOT" || exit 0
+H=handoffs
+OPEN="$H/OPEN.md"
+STATE="$H/.jarvis"
+BIN="$H/bin"
+
+JARVIS_MAX_CLAUDE=3      # Claude sessions at once, Jarvis included; only when ultron has no workers.max setting
+JARVIS_AMBER=50          # 5-hour % that turns the band amber
+JARVIS_RED=75            # 5-hour % that turns it red
+JARVIS_FRESH_AFTER=80000 # a blocked worker over this context gets its answers as a fresh worker
+JARVIS_IDLE_MIN=55       # minutes idle after which a big context is cheaper to clear than reload
+JARVIS_GUARD_TOKENS=100000
+JARVIS_PUSH=1
+# shellcheck disable=SC1090
+[ -f "$H/jarvis.conf" ] && . "$H/jarvis.conf"
+# Ultron injects these into every session it starts (docs/architecture.md §4.3).
+ME="${ULTRON_SESSION_ID:-}"
+# Set in a worktree: this is a branch Jarvis, and its workers run here too.
+WT="${ULTRON_WORKTREE_ID:-}"
+# Isolated workers' worktrees: outside the repo and outside ~/.ultron, since Ultron lists a
+# project's worktrees as branch Jarvises. Their cargo builds share one target/ here.
+WT_ROOT="${JARVIS_WT_ROOT:-$HOME/.jarvis-worktrees}"
+
+die() { echo "jarvis: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+now() { date +%s; }
+short() { printf '%s' "$1" | cut -c1-8; }
+mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+need_ultron() { have ultron || die "the ultron CLI is not on PATH — start Ultron, or add ~/.ultron/bin to PATH"; }
+
+# ---------------------------------------------------------------- ultron
+
+# The transport of session $1: `pty`, or `stream` for a chat session (Claude in
+# stream-json mode: Jarvis and Vision by default). `pty` when the daemon doesn't say.
+transport_of() {
+  local t=""
+  have jq && t=$(ultron term get "$1" --json 2>/dev/null | jq -r '.transport // empty' 2>/dev/null)
+  echo "${t:-pty}"
+}
+
+# Whether this `ultron` has the `chat` commands. Without them, `term read|send`
+# still reach a stream session (the daemon routes them), just less exactly.
+have_chat() { ultron chat --help >/dev/null 2>&1; }
+
+# A chat session's `chat history --json` as screen-like text, the way the
+# daemon renders it for `term read`.
+CHAT_TEXT='.events[]? | .data as $d | .kind as $k
+  | def one: tostring | gsub("\\s+"; " ") | if length > 100 then .[0:100] + "…" else . end;
+  if $k == "user_message" then ($d.text // "" | split("\n")[] | "> " + .)
+  elif $k == "assistant_message" then ($d.text // "")
+  elif $k == "tool_use" then "[tool \($d.name // "?")] \($d.input | one)"
+  elif $k == "tool_result" then "[\(if $d.is_error == true then "error" else "result" end)] \($d.output // "" | one)"
+  elif $k == "turn_finished" then "[turn \($d.subtype // "")]"
+  elif $k == "restarted" then (if $d.resume == true then "[resumed]" else "[cleared]" end)
+  elif $k == "stderr" then "! \($d.line // "")"
+  elif $k == "exited" then "[exited \($d.code)]"
+  else empty end'
+
+# The screen of session $1, last $2 lines, as plain text. A chat session has no
+# screen: its conversation from `chat history` stands in.
+screen() {
+  local out
+  if [ "$(transport_of "$1")" = stream ] && have jq && have_chat; then
+    out=$(ultron chat history "$1" --limit 200 --json 2>/dev/null | jq -r "$CHAT_TEXT" 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out" | tail -n "$2"; return; }
+  fi
+  ultron term read "$1" --max-lines "$2" --json 2>/dev/null \
+    | { have jq && jq -r '.screen // empty' || cat; }
+}
+
+# The state of session $1 (starting|working|idle|waiting_on_user|limit_hit|exited|failed),
+# from a `term list --all` array in $2. Empty when the daemon doesn't know it.
+session_state() {
+  have jq || return 0
+  printf '%s' "$2" | jq -r --arg id "$1" '.[]? | select(.id == $id) | .state // empty' 2>/dev/null | head -n 1
+}
+
+live_sessions() { ultron term list --all --json 2>/dev/null || echo '[]'; }
+
+# ---------------------------------------------------------------- OPEN.md
+
+jarvis_terminal() {
+  sed -n 's/^Jarvis session:[[:space:]]*//p' "$OPEN" 2>/dev/null | head -n 1 | awk '{print $1}' | grep -v '^<' || true
+}
+
+# "- <when> · <agent>/<model> <effort> · term <id> · <brief> · <slug>"
+running_lines() {
+  awk '/^## /{on = ($0 ~ /^## Running workers/); next} on && /^- /' "$OPEN" 2>/dev/null
+}
+
+claude_sessions() { # Jarvis plus every running Claude worker
+  echo $(( $(running_lines | grep -c '· claude/') + 1 ))
+}
+
+# The user's cap on workers (Ultron's Settings, `ultron settings get workers.max`), read
+# on every call so a change applies to the next spawn. Empty when this ultron has no
+# settings (an older daemon): JARVIS_MAX_CLAUDE applies instead.
+# The user's default model or effort for a Claude worker (Ultron's Settings → Jarvis:
+# workers.model, workers.effort), for a brief that names none. Empty on an older daemon.
+worker_default() { # <model|effort>
+  have jq && have ultron || return 0
+  ultron settings get "workers.$1" --json 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true
+}
+
+workers_max() {
+  have jq && have ultron || return 0
+  ultron settings get workers.max --json 2>/dev/null | jq -r '.value // empty' 2>/dev/null | grep -E '^[0-9]+$' || true
+}
+
+# Live worker sessions of this Jarvis, any agent (Claude, Codex, OpenCode): in this
+# project and in this checkout (the main one, or this branch Jarvis's worktree); Jarvis
+# isn't one. Empty when the daemon can't be asked.
+live_workers() {
+  have jq && have ultron || return 0
+  ultron term list --role worker ${ULTRON_PROJECT_ID:+--project "$ULTRON_PROJECT_ID"} --json 2>/dev/null \
+    | jq -r --arg wt "$WT" 'if type == "array" then [.[] | select((.worktree // "") == $wt)] | length else empty end' 2>/dev/null
+}
+
+# The status line's cap: "workers: N of M", or the Claude count without a workers.max.
+cap_line() {
+  local max now
+  max=$(workers_max)
+  [ -n "$max" ] && now=$(live_workers)
+  if [ -n "$max" ] && [ -n "$now" ]; then
+    printf 'workers: %s of %s\n' "$now" "$max"
+  else
+    printf 'claude sessions: %s of %s (Jarvis included)\n' "$(claude_sessions)" "$JARVIS_MAX_CLAUDE"
+  fi
+}
+
+open_add_running() { # $1 = line
+  local tmp; tmp=$(mktemp) || return 1
+  awk -v line="$1" '{print} /^## Running workers/ && !done {print line; done=1}' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
+}
+
+open_drop() { # drop list items that mention $1
+  local tmp; tmp=$(mktemp) || return 1
+  awk -v k="$1" '!(/^- / && index($0, k))' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
+}
+
+open_set() { # $1 = "Jarvis session" | "Usage band", $2 = value
+  local tmp; tmp=$(mktemp) || return 1
+  awk -v k="$1" -v v="$2" 'index($0, k ":") == 1 {print k ": " v; next} {print}' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
+}
+
+field() { # $1 = key, $2 = file: "key: value" from a brief header or handoff
+  sed -n "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1
+}
+
+# ---------------------------------------------------------------- band
+
+# Prints "<band>\t<one-line explanation>". The reading comes from `jarvis statusline`,
+# which Claude Code feeds its own 5-hour and 7-day rate-limit numbers.
+band() {
+  local f="$STATE/usage.json"
+  have jq || { printf 'unknown\tjq not installed\n'; return; }
+  [ -s "$f" ] || { printf 'unknown\tno statusline reading yet — check `/usage` and write the band by hand\n'; return; }
+  jq -r --argjson now "$(now)" --argjson amber "$JARVIS_AMBER" --argjson red "$JARVIS_RED" '
+    def hm: (. / 60 | floor) as $m | "\($m / 60 | floor)h\($m % 60 | tostring | if length < 2 then "0" + . else . end)m";
+    (.five_hour.used_percentage // null) as $u
+    | (.five_hour.resets_at // null) as $r
+    | (.seven_day.used_percentage // null) as $w
+    | (($now - .ts) / 60 | floor) as $age
+    | if $u == null or $r == null then "unknown\tthe reading has no 5-hour window"
+      elif $now >= $r then "green\tthe 5-hour window has reset since the last reading (\($age) min ago)"
+      else
+        (18000 - ($r - $now)) as $el
+        | (if $el >= 1800 then ($u * 18000 / $el) else null end) as $pace
+        | (if $u >= $red or ($w // 0) >= 95 then "red"
+           elif $u >= $amber or ($pace // 0) >= 100 or ($w // 0) >= 80 then "amber"
+           else "green" end) as $b
+        | "\($b)\t5h \($u | round)% used, \($el | hm) into the window"
+          + (if $pace then ", on pace for \($pace | round)%" else "" end)
+          + (if $w then " · 7d \($w | round)%" else "" end)
+          + (if $age > 20 then " · reading \($age) min old" else "" end)
+      end' "$f" 2>/dev/null || printf 'unknown\tunreadable %s\n' "$f"
+}
+
+cmd_band() { band | tr '\t' ' '; }
+
+# ---------------------------------------------------------------- start / status
+
+# Whether session id $1 is Ultron's (s_…). Anything else in OPEN.md is a Superset terminal.
+ours() { case "$1" in s_*) return 0 ;; *) return 1 ;; esac; }
+
+# Superset terminal $1: 0 if it's still open, 1 if not, 2 if Superset can't be asked.
+# Ultron strips SUPERSET_* from its sessions, and the superset CLI needs the workspace and
+# the organization, so the Superset script's `start` leaves them in $STATE/superset.host.
+superset_open() {
+  local ws org list
+  have superset || return 2
+  ws=$(sed -n 's/^workspace=//p' "$STATE/superset.host" 2>/dev/null)
+  org=$(sed -n 's/^organization=//p' "$STATE/superset.host" 2>/dev/null)
+  ws="${SUPERSET_WORKSPACE_ID:-$ws}"; org="${SUPERSET_ORGANIZATION_ID:-$org}"
+  [ -n "$ws" ] || return 2
+  list=$(env ${org:+SUPERSET_ORGANIZATION_ID="$org"} superset terminals list --workspace "$ws" --json 2>/dev/null) || return 2
+  printf '%s' "$list" | grep -q "$1"
+}
+
+# Running-worker lines whose terminal isn't this Jarvis's: an Ultron session that's gone
+# from the daemon or runs in another checkout (a fresh branch Jarvis's OPEN.md came from
+# main's), or, for a branch Jarvis, a Superset terminal. Prints what it drops.
+drop_foreign_workers() { # $1 = live_sessions JSON
+  local line id wt
+  have jq || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    id=$(printf '%s' "$line" | sed -n 's/.*term \([^ ]*\).*/\1/p')
+    [ -n "$id" ] || continue
+    if ours "$id"; then
+      wt=$(printf '%s' "$1" | jq -r --arg id "$id" '[.[]? | select(.id == $id)] | if length == 0 then "@gone" else (.[0].worktree // "") end' 2>/dev/null) || continue
+      [ "$wt" = "$WT" ] && continue
+    else
+      [ -n "$WT" ] || continue
+    fi
+    open_drop "term $id"
+    echo "dropped from Running workers (not this Jarvis's): $line"
+  done <<EOF
+$(running_lines)
+EOF
+}
+
+cmd_start() {
+  local old live oldwt
+  [ -f "$OPEN" ] || die "no $OPEN — run ultron-jarvis:setup first"
+  [ -n "$ME" ] || die "ULTRON_SESSION_ID not set — run Jarvis in an Ultron session (ultron agent spawn --role jarvis …)"
+  need_ultron
+  live=$(live_sessions)
+  old=$(jarvis_terminal)
+  # A Jarvis of another checkout (main's, in the OPEN.md a new worktree copied) isn't ours to wait on.
+  if [ -n "$old" ] && ours "$old" && have jq; then
+    oldwt=$(printf '%s' "$live" | jq -r --arg id "$old" '.[]? | select(.id == $id) | .worktree // ""' 2>/dev/null | head -n 1)
+    [ "$oldwt" = "$WT" ] || old=""
+  elif [ -n "$old" ] && [ -n "$WT" ]; then
+    old=""
+  fi
+  if [ -n "$old" ] && [ "$old" != "$ME" ] && [ "${1:-}" != --force ]; then
+    if ours "$old"; then
+      case "$(session_state "$old" "$live")" in
+        ""|exited|failed) ;;
+        *) die "another Jarvis ($old) is still open — ask the user, then: jarvis start --force" ;;
+      esac
+    else
+      superset_open "$old"
+      case $? in
+        0) die "another Jarvis ($old, in Superset) is still open — ask the user, then: jarvis start --force" ;;
+        2) die "can't check whether the Superset Jarvis ($old) is still open (no superset CLI, or Superset didn't answer) — ask the user, then: jarvis start --force" ;;
+      esac
+    fi
+  fi
+  open_set "Jarvis session" "$ME"
+  drop_foreign_workers "$live"
+  mkdir -p "$STATE"
+  # A chat Jarvis outside bypassPermissions has nobody to ask, so its bash calls get refused.
+  if have jq && ultron term get "$ME" --json 2>/dev/null | jq -e '.transport == "stream"
+       and ((.command // []) | index(["--permission-mode", "bypassPermissions"]) == null)' >/dev/null 2>&1; then
+    echo "warning: this Jarvis is a chat session without --permission-mode bypassPermissions, so tool calls"
+    echo "  needing approval are refused. Respawn it with that flag (the setup skill's spawn line has it)."
+  fi
+  cmd_status
+}
+
+cmd_status() {
+  local b line id brief ho ids="" n=0 changed claimed unclaimed live="[]" st
+  [ -f "$OPEN" ] || die "no $OPEN — run ultron-jarvis:setup first"
+
+  b=$(band)
+  printf 'band: %s\n' "$(printf '%s' "$b" | tr '\t' ' ' | sed 's/ /: /')"
+  case "$(printf '%s' "$b" | cut -f1)" in
+    green|amber|red) open_set "Usage band" "$(printf '%s' "$b" | cut -f1) ($(printf '%s' "$b" | cut -f2 | cut -d, -f1), $(date +%H:%M))" ;;
+  esac
+
+  have ultron && live=$(live_sessions)
+  [ -n "$WT" ] && printf 'branch: %s (worktree %s): commit here; ship to main only when the user says (JARVIS.md, Branch Jarvis)\n' \
+    "$(git branch --show-current 2>/dev/null || echo '?')" "$WT"
+  echo "events: arm Monitor on handoffs/bin/jarvis events"
+  cap_line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    n=$((n + 1))
+    id=$(printf '%s' "$line" | sed -n 's/.*term \([^ ]*\).*/\1/p')
+    brief=$(printf '%s' "$line" | grep -o "$H/briefs/[^ ]*\.md" | head -n 1)
+    ho=""
+    [ -n "$brief" ] && ho=$(grep -l "^brief:[[:space:]]*$brief" "$H"/*.md 2>/dev/null | head -n 1)
+    st=$(session_state "$id" "$live")
+    printf '  %s %s %s [%s]' "$(short "$id")" "$(printf '%s' "$line" | awk -F' · ' '{print $2}')" "$(basename "${brief:-?}" .md)" "${st:-gone}"
+    if [ -n "$ho" ]; then printf '  → %s (%s)\n' "$ho" "$(field status "$ho")"; else echo; fi
+    iso_status "$line"
+    [ -n "$id" ] && [ -z "$ho" ] && ids="$ids $id"
+  done <<EOF
+$(running_lines)
+EOF
+  [ $n = 0 ] && echo "  no workers running"
+
+  if [ -n "$ids" ]; then
+    echo "workers still at it:"
+    if [ -x "$BIN/jev.sh" ]; then
+      # shellcheck disable=SC2086
+      "$BIN/jev.sh" triage $ids 2>/dev/null | sed 's/^/  /'
+    elif have ultron; then
+      for id in $ids; do
+        printf '  %s\n' "$(short "$id")"
+        screen "$id" 40 | sed -e 's/[[:space:]]*$//' | grep -v '^$' | tail -n 4 | sed 's/^/      /'
+      done
+    else
+      echo "  (ultron not on PATH — can't read their screens)"
+    fi
+  fi
+
+  # handoffs on disk that no running worker accounts for
+  for ho in "$H"/*.md; do
+    [ -f "$ho" ] || continue
+    case "$(basename "$ho")" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md) ;; *) continue ;; esac
+    brief=$(field brief "$ho")
+    running_lines | grep -q "${brief:-@@none@@}" && continue
+    echo "handoff not tied to a running worker: $ho ($(field status "$ho"))"
+  done
+
+  changed=$(git status --porcelain -uall 2>/dev/null | grep -v " $H/" | wc -l | tr -d ' ')
+  claimed=0
+  for ho in "$H"/*.md; do [ -f "$ho" ] && claimed=$((claimed + $(listed_files "$ho" | wc -l))); done
+  unclaimed=$((changed - claimed)); [ $unclaimed -lt 0 ] && unclaimed=0
+  printf 'git: %s changed outside handoffs/ · about %s not in any handoff yet · %s\n' \
+    "$changed" "$unclaimed" "$(git log -1 --format='last commit %h %ar' 2>/dev/null)"
+  n=$(awk '/^## /{on = ($0 ~ /^## To-do/); next} on && /^- /' "$OPEN" | wc -l | tr -d ' ')
+  q=$(awk '/^## /{on = ($0 ~ /^## Questions for the user/); next} on && /^- /' "$OPEN" | wc -l | tr -d ' ')
+  printf 'OPEN.md: %s question(s) for the user · %s to-do\n' "$q" "$n"
+  finished_todos
+  unbriefed_tasks
+}
+
+# For `status`: To-do lines that look finished ("shipped", "merged", "done",
+# "dropped", "retired", "reverted", or a commit sha in parentheses). To-do holds
+# only work not done yet (JARVIS.md, "What goes in OPEN.md"). Five at most.
+finished_todos() {
+  local line w=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    w=$((w + 1)); [ $w -le 5 ] || break
+    [ ${#line} -gt 60 ] && line="${line:0:60}…"
+    printf 'to-do looks finished: "%s" — take it out of To-do; if the user should check it, add a manual test (<what>): line under Questions for the user\n' "$line"
+  done <<EOF
+$(awk '
+  /^## /{on = ($0 ~ /^## To-do/); next}
+  on && /^- / {
+    l = tolower($0)
+    if (l ~ /(^|[^a-z0-9_])(shipped|merged|done|dropped|retired|reverted)([^a-z0-9_]|$)/ ||
+        l ~ /\(([^)]*[^0-9a-z])?[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+([^0-9a-z][^)]*)?\)/) {
+      sub(/^- +/, ""); print
+    }
+  }' "$OPEN")
+EOF
+}
+
+# ---------------------------------------------------------------- libraries
+
+# Every brief gets `## Libraries and design rules`: what `ultron knowledge show`
+# says for this project (the user's libraries, design rules), so workers follow
+# them too, not only Jarvis. Never blocks a spawn: a missing ultron, an error or
+# a slow daemon leaves one "(knowledge unavailable: …)" line instead.
+KNOWLEDGE_SEC=5
+
+ultron_cli() { # on PATH, else ~/.ultron/bin/ultron
+  if have ultron; then command -v ultron
+  elif [ -x "$HOME/.ultron/bin/ultron" ]; then echo "$HOME/.ultron/bin/ultron"
+  else return 1; fi
+}
+
+# Run "$@" for at most $1 seconds; non-zero when it was cut off. The stock macOS
+# has no timeout(1). Give it a file, not a pipe, for stdout: a cut-off child can
+# outlive the kill and would hold a pipe open.
+time_boxed() {
+  local secs=$1 pid w rc; shift
+  "$@" & pid=$!
+  ( sleep "$secs"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 & w=$!
+  wait "$pid"; rc=$?
+  kill "$w" 2>/dev/null; wait "$w" 2>/dev/null
+  return $rc
+}
+
+one_line() { # the daemon's error from ultron's output $1, else its first line
+  local e
+  e=$(printf '%s' "$1" | jq -r '.error // empty' 2>/dev/null)
+  [ -n "$e" ] || e=$(printf '%s\n' "$1" | sed -n '/[^[:space:]]/{p;q;}')
+  printf '%s' "${e:-no output}" | cut -c1-160
+}
+
+knowledge_fetch() { # $1 = the ultron CLI, $2 = the project id (empty: look it up)
+  local u=$1 proj=${2:-} out
+  if [ -z "$proj" ]; then
+    out=$("$u" project get --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
+    proj=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
+    [ -n "$proj" ] || { echo "(knowledge unavailable: no project id from ultron project get)"; return 0; }
+  fi
+  out=$("$u" knowledge show --project "$proj" --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
+  out=$(printf '%s' "$out" | jq -r '.text // empty' 2>/dev/null) || { echo "(knowledge unavailable: unreadable output from ultron knowledge show)"; return 0; }
+  [ -n "$out" ] || out="(no shared knowledge applies to this project)"
+  printf '%s\n' "$out"
+}
+
+# Write the knowledge into brief $1 under `## Libraries and design rules`,
+# replacing that section if it's there: after `## Context`, else before
+# `## Scope`, else at the end. Its own headings are pushed down two levels so
+# they can't end the section.
+stamp_knowledge() { # $1 = brief, $2 = the project id (empty: ultron project get)
+  local brief=$1 u tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-kn.XXXXXX") || return 0
+  if ! u=$(ultron_cli); then
+    echo "(knowledge unavailable: ultron not found)" > "$tmp"
+  elif ! time_boxed "$KNOWLEDGE_SEC" knowledge_fetch "$u" "${2:-}" > "$tmp" 2>/dev/null || [ ! -s "$tmp" ]; then
+    echo "(knowledge unavailable: ultron didn't answer within ${KNOWLEDGE_SEC} s)" > "$tmp"
+  fi
+  sed -E 's/^(#+[[:space:]])/##\1/' "$tmp" > "$tmp.md"
+  awk -v hasctx="$(grep -c '^## Context' "$brief")" '
+    FNR == NR { kn = kn $0 "\n"; next }
+    function emit() {
+      if (done) return
+      printf "## Libraries and design rules\n<!-- written by jarvis spawn from `ultron knowledge show`; replaced on every spawn -->\n%s\n", kn
+      done = 1
+    }
+    /^## / {
+      skip = 0
+      if ($0 ~ /^## Libraries and design rules[[:space:]]*$/) { skip = 1; next }
+      if (inctx) { emit(); inctx = 0 }
+      if ($0 ~ /^## Context/) inctx = 1
+      else if (hasctx == 0 && $0 ~ /^## Scope/) emit()
+    }
+    skip { next }
+    { print }
+    END { if (!done) { print ""; emit() } }
+  ' "$tmp.md" "$brief" > "$brief.tmp" && mv "$brief.tmp" "$brief"
+  case "$(sed -n '1p' "$tmp")" in
+    "(knowledge unavailable"*) echo "libraries: $(sed -n '1p' "$tmp") — spawning anyway" ;;
+    *) echo "libraries: $(wc -l < "$tmp" | tr -d ' ') line(s) of shared knowledge written into the brief" ;;
+  esac
+  rm -f "$tmp" "$tmp.md" "$brief.tmp"
+}
+
+# ---------------------------------------------------------------- spawn
+
+# Record in the header of brief $1 what it follows on: `$2: $3` (after = the next
+# phase, redo = sent back), on its own line under `started:`, then `why: $4` (the
+# reason a redo was sent back) when given. Any earlier after:/redo:/why: line goes;
+# with no $2, that's all it does.
+brief_follows() {
+  WHY="${4:-}" awk -v key="${2:-}" -v val="${3:-}" '
+    /^## / { body = 1 }
+    !body && /^(after|redo|why):/ { next }
+    { print }
+    !body && !done && key != "" && /^started:/ {
+      print key ": " val
+      if (ENVIRON["WHY"] != "") print "why: " ENVIRON["WHY"]
+      done = 1
+    }
+    END { if (key != "" && !done) exit 3 }
+  ' "$1" > "$1.tmp" || { rm -f "$1.tmp"; return 1; }
+  mv "$1.tmp" "$1"
+}
+
+# ---------------------------------------------------------------- tasks
+
+# What the user asked for, from Ultron's Tasks (docs/design/tasks-v2.md §4.1). A
+# brief names the tasks it works on in its header, under `started:`:
+# `Tasks: T-41, T-42`, optionally `Tasks: T-42 (part 1 of 2)`; `41` is T-41 and an
+# old ask id (31.2) still works. Older briefs' `Asks: 31.2, 31` (31 = the whole
+# message) are read too. Checked against `ultron tasks list`. A missing ultron, a
+# CLI without `tasks`, an error or no answer within ASKS_SEC skips the checks:
+# they never block a spawn.
+ASKS_SEC=5
+
+# The tasks ultron knows, one "<id>\t<state>" per line: each task by its number
+# (T-41) and by its old ask id (31.2), and each message (31). The state is the
+# task's status, `skipped-user`/`skipped-jarvis` when skipped, `removed` when
+# removed. $1 = the ultron CLI, then flags for `tasks list` (--open). Always
+# `--peek`, so reading the list here never marks the user's changes as seen. Falls back
+# to `asks list` on an older CLI. Fails when it can't tell.
+asks_known() {
+  local u=$1 out; shift
+  out=$("$u" tasks list "$@" --peek --json 2>/dev/null) || out=$("$u" asks list "$@" --json 2>/dev/null) || return 1
+  out=$(printf '%s' "$out" | jq -r '
+    def state:
+      if ((.removed_at // .removed // .became_note // false) | . != false and . != null) or .status == "removed" then "removed"
+      elif .status == "skipped" or .ending == "skipped" then "skipped-\(.skipped_by // "user")"
+      else (.status // "-") end;
+    def tno: (.tno // (if (.id | type) == "string" and (.id | test("^T-[0-9]+$")) then .id[2:] else null end)) | tostring | select(test("^[0-9]+$"));
+    def askid: [.id, .ask][] | strings | select(test("^[0-9]+[.][0-9]+$"));
+    ( .. | objects | select(has("tno") or ((.id? | strings | test("^(T-)?[0-9]+([.][0-9]+)?$")) // false) and has("status"))
+      | state as $s | ("T-" + tno), askid | "\(.)\t\($s)" ),
+    ( .. | objects | select(((.n // null) | numbers) != null and (.asks? | arrays) != null)
+      | "\(.n)\t\(if (.asks | length) == 0 then "not_split" else "-" end)" )
+  ' 2>/dev/null) || return 1
+  [ -z "$out" ] || printf '%s\n' "$out" | sort -u
+}
+
+# The ids in a Tasks: or Asks: value $1, one per line, without "(part 1 of 2)".
+header_ids() {
+  printf '%s' "$1" | sed -E 's/[[:space:]]*\(part [0-9]+ of [0-9]+\)$//' | tr ', ' '\n\n' | sed '/^$/d'
+}
+
+# For `status`: the open tasks no brief names on its Tasks: (or Asks:) line, so a
+# Jarvis that did one itself sees it's still Queued and closes it. Five lines at
+# most. Fails open: no ultron, no jq or an error prints nothing.
+unbriefed_tasks() {
+  local u tmp f key val named=""
+  have jq || return 0
+  u=$(ultron_cli) || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-tasks.XXXXXX") || return 0
+  if ! time_boxed "$ASKS_SEC" "$u" tasks list --open --peek --json > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; return 0
+  fi
+  for f in "$H"/briefs/*.md; do
+    [ -f "$f" ] || continue
+    key=$(awk '/^## /{exit} /^(Tasks|Asks):/{sub(/:.*/, ""); print; exit}' "$f")
+    [ -n "$key" ] || continue
+    val=$(awk -v k="$key" '/^## /{exit} index($0, k ":") == 1 {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' "$f")
+    case "$val" in *"<"*) continue ;; esac # TEMPLATE.md's placeholder
+    val=$(header_ids "$val" | grep -E '^(T-)?[0-9]+$|^[0-9]+[.][0-9]+$')
+    [ "$key" = Tasks ] && val=$(printf '%s\n' "$val" | sed -E 's/^([0-9]+)$/T-\1/')
+    named="$named $(printf '%s' "$val" | tr '\n' ' ')"
+  done
+  jq -r '
+    .messages[]?.asks[]?
+    | select(.status == "queued" and .planned != true and .answered != true and .skipped_by == null and .task != null)
+    | [.task, (.id | tostring), (.message | tostring),
+       (if (.title | length) > 40 then .title[:40] + "…" else .title end)] | @tsv
+  ' "$tmp" 2>/dev/null | awk -F '\t' -v named="$named" '
+    BEGIN { n = split(named, a, " "); for (i = 1; i <= n; i++) seen[a[i]] = 1 }
+    seen[$1] || seen[$2] || seen[$3] { next }
+    ++c <= 5 { printf "task %s \"%s\" has no brief: brief it, or once you'"'"'ve done it yourself: ultron tasks close %s --answered --note \"<one line>\"\n", $1, $4, $1 }
+    END { if (c > 5) printf "… and %d more\n", c - 5 }'
+  rm -f "$tmp"
+}
+
+# Lint brief $1's Tasks: line (or an older Asks: line) ($2 = 1 for --force) and
+# leave it in ASKS for the spawn line. A malformed line refuses; an id ultron
+# doesn't know refuses unless --force; a task the user (or Jarvis) skipped or
+# removed always refuses; no line while tasks are open only warns.
+check_asks() {
+  local brief=$1 force=${2:-0} key="" val ids bad u tmp id st line
+  ASKS=""
+  key=$(awk '/^## /{exit} /^(Tasks|Asks):/{sub(/:.*/, ""); print; exit}' "$brief")
+  if [ -n "$key" ]; then
+    val=$(awk -v k="$key" '/^## /{exit} index($0, k ":") == 1 {sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print; exit}' "$brief")
+    ids=$(header_ids "$val")
+    if [ "$key" = Tasks ]; then
+      [ -n "$ids" ] || die "brief has an empty Tasks: line (put the task numbers, e.g. Tasks: T-41, or remove the line)"
+      bad=$(printf '%s\n' "$ids" | grep -vE '^(T-)?[0-9]+$|^[0-9]+[.][0-9]+$' | head -n 1)
+      [ -z "$bad" ] || die "'$bad' in the brief's Tasks: line isn't a task number (T-41, then an optional (part 1 of 2))"
+      ids=$(printf '%s\n' "$ids" | sed -E 's/^([0-9]+)$/T-\1/')
+    else
+      [ -n "$ids" ] || die "brief has an empty Asks: line (put the ask ids, e.g. Asks: 31.2, or remove the line)"
+      bad=$(printf '%s\n' "$ids" | grep -vE '^[0-9]+([.][0-9]+)?$' | head -n 1)
+      [ -z "$bad" ] || die "'$bad' in the brief's Asks: line isn't an ask id (31.2, or 31 for the whole message, then an optional (part 1 of 2))"
+    fi
+    ASKS=$val
+  fi
+  u=$(ultron_cli) || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-asks.XXXXXX") || return 0
+  if [ -n "$key" ]; then
+    if time_boxed "$ASKS_SEC" asks_known "$u" > "$tmp" 2>/dev/null; then
+      bad=""
+      while read -r id; do
+        line=$(awk -F '\t' -v id="$id" '$1 == id {print $2; exit}' "$tmp")
+        case "$line" in
+          skipped-jarvis) rm -f "$tmp"; die "$id was skipped by Jarvis — don't brief it (bring it back in the Jarvis tab first)" ;;
+          skipped-*) rm -f "$tmp"; die "$id was skipped by the user — don't brief it unless they bring it back" ;;
+          removed) rm -f "$tmp"; die "$id was removed by the user — it isn't a task any more" ;;
+          "")
+            # an older CLI with no T numbers can't vouch for T-41
+            case "$id" in T-*) grep -q '^T-' "$tmp" || continue ;; esac
+            bad="$bad$id " ;;
+        esac
+      done <<EOF
+$ids
+EOF
+      if [ -n "$bad" ]; then
+        rm -f "$tmp"
+        [ "$force" = 1 ] || die "no task ${bad% } in this project (ultron tasks list; or the user removed it) — fix the brief's $key: line, or --force if the list is wrong"
+        echo "tasks: ${bad% } not in ultron tasks list — spawning anyway (--force)"
+      fi
+    fi
+  elif time_boxed "$ASKS_SEC" asks_known "$u" --open > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    # T numbers when the CLI has them, else ask ids; a message only when it isn't split yet
+    st=$(awk -F '\t' '
+      $2 ~ /^(skipped|removed|done|answered)/ { next }
+      $1 ~ /^T-/ { t[++nt] = $1; next }
+      $1 ~ /[.]/ { a[++na] = $1; next }
+      $2 == "not_split" { m[++nm] = $1 " (not split yet)" }
+      END {
+        if (nt) for (i = 1; i <= nt; i++) printf "%s%s", (n++ ? ", " : ""), t[i]
+        else for (i = 1; i <= na; i++) printf "%s%s", (n++ ? ", " : ""), a[i]
+        for (i = 1; i <= nm; i++) printf "%s%s", (n++ ? ", " : ""), m[i]
+      }' "$tmp")
+    [ -z "$st" ] || echo "tasks: warning — the brief has no Tasks: line, but these are open: $st. Put the ones it works on in a Tasks: line under started:. Spawning anyway"
+  fi
+  rm -f "$tmp"
+}
+
+# §2 rule 2: a brief carries only the notes that matter for its job, since every
+# line is re-read on every worker turn. Warns (never refuses) when more than
+# NOTES_MAX lines of brief $1 match notes from `ultron notes list`. The Libraries
+# section jarvis spawn writes isn't counted. Skipped silently without ultron.
+NOTES_MAX=5
+check_notes() {
+  local brief=$1 u tmp n
+  u=$(ultron_cli) || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-notes.XXXXXX") || return 0
+  if time_boxed "$ASKS_SEC" notes_known "$u" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    n=$(awk '
+      function norm(s) {
+        gsub(/<!--[^>]*-->/, "", s); s = tolower(s)
+        sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", s)
+        gsub(/[`*_"]/, "", s); gsub(/[[:space:]]+/, " ", s)
+        sub(/^ /, "", s); sub(/[ .;:,]+$/, "", s)
+        return s
+      }
+      FNR == NR { s = norm($0); if (length(s) >= 8) notes[++nn] = s; next }
+      /^## / { skip = ($0 ~ /^## Libraries and design rules/) }
+      skip { next }
+      { l = norm($0); if (l == "") next
+        for (i = 1; i <= nn; i++) if (index(l, notes[i])) { hits++; break } }
+      END { print hits + 0 }
+    ' "$tmp" "$brief")
+    [ "$n" -le "$NOTES_MAX" ] || echo "notes: warning — $n lines of the brief repeat notes from handoffs/NOTES.md (more than $NOTES_MAX). Keep only the ones that matter for this job: every line is re-read on every worker turn. Spawning anyway"
+  fi
+  rm -f "$tmp"
+}
+
+# The notes' texts, one per line. $1 = the ultron CLI. Fails when it can't tell.
+notes_known() {
+  local out
+  out=$("$1" notes list --json 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -r '
+    if type == "array" then .[] else (.notes // [])[] end
+    | if type == "string" then . else (.text // empty) end
+  ' 2>/dev/null
+}
+
+# ---------------------------------------------------------------- request ids, files:
+
+# A fixed request id for one daemon call: jarvis-<what>-<16 hex of a hash of the rest>.
+# The daemon answers a repeat of an id from what it did the first time (for 24 hours), so
+# a retried spawn or merge never does it twice. A spawn's id hashes the brief's path and
+# its started: line, which a spawn rewrites once it has its session: a retry after a
+# failure finds the same id, and a deliberate spawn of the same brief later gets a new one.
+request_id() { # $1 = spawn | merge, then what names the call
+  local what="$1" h; shift
+  h=$(printf '%s\n' "$@" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum; } | awk '{print $1}' | cut -c1-16)
+  echo "jarvis-$what-$h"
+}
+
+# Whether this ultron takes --request-id (an older one refuses flags it doesn't know).
+takes_request_id() { ultron --help 2>/dev/null | grep -q -- '--request-id'; }
+# `--request-id=<id>` when it does, else nothing; $@ = request_id's arguments. Unquoted
+# where it's used: the id has no spaces.
+rid_flag() { takes_request_id && printf -- '--request-id=%s' "$(request_id "$@")"; }
+
+# The paths or globs brief $1's files: line names, one per line (commas or spaces between).
+# The template's <placeholder> names none.
+brief_files() {
+  local v; v=$(field files "$1")
+  case "$v" in ""|\<*) return 0 ;; esac
+  printf '%s\n' "$v" | tr ',' ' ' | tr -s ' \t' '\n\n' | sed -e 's/`//g' -e 's#^\./##' -e 's#/$##' | grep -v '^$'
+}
+
+# Whether path-or-glob $1 and $2 can name the same file: equal, one a folder holding the
+# other, one a glob matching the other, or (both globs) one's fixed start inside the other's.
+paths_overlap() {
+  local a="$1" b="$2" pa pb
+  [ "$a" = "$b" ] && return 0
+  case "$b" in "$a"/*) return 0 ;; esac
+  case "$a" in "$b"/*) return 0 ;; esac
+  # shellcheck disable=SC2254
+  case "$b" in $a) return 0 ;; esac
+  # shellcheck disable=SC2254
+  case "$a" in $b) return 0 ;; esac
+  pa=${a%%[*?[]*}; pb=${b%%[*?[]*}
+  if [ "$pa" != "$a" ] && [ "$pb" != "$b" ]; then
+    case "$pa" in "$pb"*) return 0 ;; esac
+    case "$pb" in "$pa"*) return 0 ;; esac
+  fi
+  return 1
+}
+
+# For a non-isolated brief $1: one "<running brief>: <its path> ↔ <ours>" line per overlap
+# with the files: of a non-isolated worker under Running workers in OPEN.md (spawned and not
+# yet merged, so its edits are still loose in this checkout). Briefs without files: are skipped.
+files_overlaps() {
+  local mine theirs other a b
+  mine=$(brief_files "$1")
+  [ -n "$mine" ] && [ -f "$OPEN" ] || return 0
+  awk '/^## /{on = ($0 ~ /^## Running workers/); next} on && /^- / && !/ · isolate: /' "$OPEN" \
+    | sed -n 's/.* · term [^ ]* · \([^ ]*\).*/\1/p' | sort -u | while read -r other; do
+      set -f  # the globs are patterns here, not to expand
+      [ "$other" = "$1" ] && continue
+      [ -f "$other" ] || continue
+      case "$(iso_path "$other")" in ""|no) ;; *) continue ;; esac
+      theirs=$(brief_files "$other")
+      [ -n "$theirs" ] || continue
+      for a in $theirs; do
+        for b in $mine; do
+          paths_overlap "$a" "$b" && echo "$other: $a ↔ $b"
+        done
+      done
+    done
+}
+
+# Spawn's refusal: brief $1 (not isolated) shares files with a running worker; $2 = force.
+check_files() {
+  local hits
+  hits=$(files_overlaps "$1")
+  [ -n "$hits" ] || return 0
+  echo "jarvis: $1 expects to touch files a running worker in this checkout also does:" >&2
+  printf '%s\n' "$hits" | head -n 12 | sed 's/^/  /' >&2
+  [ "$2" = 1 ] && { echo "  spawning anyway (--force)" >&2; return 0; }
+  die "isolate one of them (--isolate, or isolate: yes), wait for that worker's merge, or --force"
+}
+
+# For spawn --answers: brief $1 gets the answers ($2) and the blocked handoff ($3, else the
+# newest blocked handoff naming it) appended under ## Answers, once (a retry finds them there);
+# with $4 = 1 a fable model: line becomes claude-opus-5-5. Closes the old worker (the brief's
+# started: line names it) and drops its OPEN.md line. Sets ANS_BLOCKED and ANS_TERM.
+answered_brief() {
+  local brief="$1" ans="$2" ho="$3" settled="$4" f tmp
+  if [ -z "$ho" ]; then
+    for f in $(ls -t "$H"/*.md 2>/dev/null); do
+      [ "$(field brief "$f")" = "$brief" ] || continue
+      case "$(field status "$f")" in blocked*) ho="$f"; break ;; esac
+    done
+  fi
+  [ -n "$ho" ] || { echo "jarvis: no blocked handoff names $brief; give it with --blocked" >&2; return 1; }
+  ANS_BLOCKED="$ho"
+  ANS_TERM=$(sed -n 's/^started:.*terminal:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$brief" | head -n 1)
+  case "$ANS_TERM" in ""|\<*|dry-*) ANS_TERM="" ;; esac
+  if ! grep -qF "### The blocked handoff ($ho)" "$brief"; then
+    { printf '\n## Answers (%s)\n\n' "$(date '+%Y-%m-%d %H:%M')"
+      cat "$ans"
+      printf '\n\n### The blocked handoff (%s)\n\n' "$ho"
+      sed -e 's/^# /#### /' -e 's/^## /#### /' "$ho"
+    } >> "$brief"
+  fi
+  if [ "$settled" = 1 ] && [ "$(field model "$brief" | awk '{print $1}')" = fable ]; then
+    tmp=$(mktemp) || return 1
+    awk '/^## /{body=1} !body && !done && /^model:/ {print "model: claude-opus-5-5 (the answers settled the design; was fable)"; done=1; next} {print}' "$brief" > "$tmp" && mv "$tmp" "$brief"
+  fi
+  if [ -n "$ANS_TERM" ]; then
+    have ultron && ultron term close "$ANS_TERM" --json $(rid_flag answer "$brief" "$ANS_TERM") >/dev/null 2>&1
+    open_drop "$ANS_TERM"
+  fi
+  return 0
+}
+
+# answer <blocked handoff> <answers file> [--settled] [--fresh]: typed into the worker while its
+# context is small, else a fresh worker on the same brief (spawn --answers).
+cmd_answer() {
+  local ho="" ans="" settled="" fresh=0 brief term ctx text
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --settled) settled=--settled; shift ;;
+      --fresh) fresh=1; shift ;;
+      *) if [ -z "$ho" ]; then ho="$1"; else ans="$1"; fi; shift ;;
+    esac
+  done
+  [ -f "$ho" ] && [ -f "$ans" ] || die "usage: jarvis answer <blocked-handoff.md> <answers-file> [--settled] [--fresh]"
+  brief=$(field brief "$ho")
+  [ -f "$brief" ] || die "$ho names no brief that exists (brief: $brief)"
+  term=$(sed -n 's/^started:.*terminal:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$brief" | head -n 1)
+  ctx=""
+  if [ $fresh = 0 ] && [ -n "$term" ] && have jq && have ultron; then
+    ctx=$(ultron term get "$term" --json 2>/dev/null \
+      | jq -r 'select(.state != "exited" and .state != "failed") | .context_tokens // 0' 2>/dev/null)
+  fi
+  if [ -n "$ctx" ] && [ "$ctx" -le "$JARVIS_FRESH_AFTER" ] 2>/dev/null; then
+    text="Answers: $(cat "$ans")"
+    ultron term send "$term" --text "$text" >/dev/null || die "couldn't type the answers into $(short "$term")"
+    echo "answered $(short "$term") in place (context $((ctx / 1000))k, at most $((JARVIS_FRESH_AFTER / 1000))k)"
+    return 0
+  fi
+  [ -n "$ctx" ] && echo "$(short "$term") is at $((ctx / 1000))k context: a fresh worker gets the answers"
+  cmd_spawn "$brief" --answers "$ans" --blocked "$ho" $settled
+}
+
+cmd_spawn() {
+  local brief="" after="" follow="" why="" force=0 worker model effort tier prompt out id b cap_now account wmax wnow
+  local iso=0 dry=0 line isotag="" rid answers="" blocked="" settled=0 oldterm="" ask
+  ask="Put every question in one first handoff (status: blocked); once answered, finish this brief and hand off."
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --answers)
+        [ $# -ge 2 ] && [ -f "$2" ] || die "--answers needs a file with the user's answers"
+        answers="$2"; shift 2 ;;
+      --blocked)
+        [ $# -ge 2 ] && [ -f "$2" ] || die "--blocked needs the worker's blocked handoff"
+        blocked="$2"; shift 2 ;;
+      --settled) settled=1; shift ;;
+      --after|--redo)
+        [ -z "$follow" ] || die "give --after or --redo, not both"
+        follow=${1#--}; after="${2:-}"; shift 2 ;;
+      --why)
+        [ $# -ge 2 ] && [ -n "$2" ] || die "--why needs a one-line reason"
+        why=$(printf '%s' "$2" | tr '\n' ' '); shift 2 ;;
+      --force) force=1; shift ;;
+      --isolate) iso=1; shift ;;
+      --no-terminal) dry=1; shift ;;
+      *) brief="$1"; shift ;;
+    esac
+  done
+  [ -f "$brief" ] || die "usage: jarvis spawn <handoffs/briefs/file.md> [--after <handoff> | --redo <handoff> [--why \"<line>\"]] [--force] [--isolate [--no-terminal]] [--answers <file> [--blocked <handoff>] [--settled]]"
+  [ -z "$why" ] || [ "$follow" = redo ] || die "--why goes with --redo"
+  [ -n "$answers" ] || { [ -z "$blocked" ] && [ $settled = 0 ]; } || die "--blocked and --settled go with --answers"
+  # Before anything rewrites the brief: a retry of this spawn gets the same id.
+  rid=$(request_id spawn "$brief" "$(field started "$brief")" "$follow" "$after" \
+    ${answers:+"answers $(cksum < "$answers" | awk '{print $1}')"})
+  if [ -n "$answers" ]; then
+    answered_brief "$brief" "$answers" "$blocked" "$settled" || exit 1
+    blocked=$ANS_BLOCKED; oldterm=$ANS_TERM
+    ask="Your questions are answered: the brief's ## Answers section has the answers and your blocked handoff $blocked. Start from them, don't re-read what that handoff already records, build straight through, and overwrite that handoff file when you hand off."
+  fi
+  # isolate: yes (a new worktree) or isolate: <path> · branch: <b> (that worktree again: a redo, a merge brief)
+  case "$(iso_path "$brief")" in ""|no) ;; *) iso=1 ;; esac
+  [ "${JARVIS_DRY:-0}" = 1 ] && dry=1
+  [ $dry = 0 ] || [ $iso = 1 ] || die "--no-terminal (JARVIS_DRY=1) goes with --isolate"
+  # a branch Jarvis's workers are its own worktree's; one elsewhere would count as main's
+  [ $iso = 0 ] || [ -z "$WT" ] || die "--isolate is for the main Jarvis: a branch Jarvis's workers already work in its own worktree"
+  have jq || die "jq is needed to read the spawn result"
+  [ $dry = 1 ] || need_ultron
+
+  worker=$(field worker "$brief" | awk '{print $1}')
+  model=$(field model "$brief" | awk '{print $1}')
+  effort=$(field effort "$brief" | awk '{print $1}')
+  case "$worker" in claude|codex|opencode|grok) ;; *) die "brief header needs worker: claude | codex | opencode | grok" ;; esac
+  # a Claude brief with no model or effort of its own takes the user's defaults
+  if [ "$worker" = claude ]; then
+    case "$model" in \<*|""|default) model=$(worker_default model) ;; esac
+    case "$effort" in \<*|""|default) effort=$(worker_default effort) ;; esac
+  fi
+  case "$model" in \<*|"") [ "$worker" = opencode ] || [ "$worker" = grok ] || die "brief header needs a model (or set a default: ultron settings set workers.model <model>)" ;; esac
+  case "$model" in fable) tier=top ;; claude-opus-5-5|opus) tier=workhorse ;; *) tier=other ;; esac
+
+  # An older "From to-do:" line (Open tab, before Tasks:) still links; an empty one is ignored.
+  if grep -q '^From to-do:' "$brief"; then
+    ft=$(grep -m1 '^From to-do:' "$brief" | sed 's/^From to-do:[[:space:]]*//')
+    case "$ft" in ""|\<*) ;; *) echo "linked to to-do: $ft (older From to-do: line; Tasks: links it now)" ;; esac
+  fi
+
+  # Tasks: line (or an older Asks:) — refuses a malformed, unknown, skipped or removed
+  # id, warns when it's missing.
+  check_asks "$brief" "$force"
+
+  # Before the lint, which fails a UI brief without the section.
+  stamp_knowledge "$brief" "${ULTRON_PROJECT_ID:-}"
+  check_notes "$brief"
+
+  if [ -x "$BIN/jev.sh" ]; then
+    "$BIN/jev.sh" brief "$brief" || [ $force = 1 ] || die "sharpen the brief (or --force if the lint is wrong)"
+  fi
+  # files: shared with a running worker in this checkout
+  [ $iso = 1 ] || check_files "$brief" "$force"
+
+  # account: N runs the worker under another Claude login (Ultron account N, ~/.claude-N
+  # by default). The band and the cap are the main account's, so they don't apply to it.
+  account=$(field account "$brief" | awk '{print $1}')
+  [ "$account" = 1 ] && account=""
+  b=$(band | cut -f1)
+  # The user's workers.max caps live workers of every agent and account, Jarvis not
+  # counted. Without it (an older daemon), the Claude cap below applies instead.
+  wmax=$(workers_max); wnow=""
+  [ -n "$wmax" ] && wnow=$(live_workers)
+  if [ -n "$wmax" ] && [ -n "$wnow" ] && [ $force = 0 ] && [ "$wnow" -ge "$wmax" ]; then
+    die "worker cap reached ($wnow of $wmax live workers, set in Ultron's Settings). Queue it under To-do in OPEN.md, wait for a worker to finish, or --force"
+  fi
+  if [ "$worker" = claude ] && [ $force = 0 ] && [ -z "$account" ]; then
+    [ "$b" = red ] && [ "$tier" != other ] && die "band is red: new $tier-tier work goes to Codex (gpt-6-astra / gpt-5.6-sol). Edit the header, or --force"
+    [ "$b" = amber ] && [ "$model" = fable ] && die "band is amber: fable is off for workers. Use model: claude-opus-5-5 (amber band; fable-tier task), or --force"
+    if [ -z "$wmax" ] || [ -z "$wnow" ]; then
+      cap_now=$(claude_sessions)
+      if [ "$cap_now" -ge "$JARVIS_MAX_CLAUDE" ]; then
+        die "Claude cap reached ($cap_now of $JARVIS_MAX_CLAUDE, Jarvis included). Queue it under To-do in OPEN.md, route it to OpenCode/Codex, or --force"
+      fi
+    fi
+  fi
+
+  prompt="You are a Jarvis worker. Read AGENTS.md, then do the task in $brief."
+  [ -n "$after" ] && prompt="$prompt $after records what is already done — start from there."
+  [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists. Never run git commands that change state."
+  prompt="$prompt $ask"
+
+  # An isolated worker runs in its own git worktree (a plain `git worktree add` on jw/<slug>,
+  # not a daemon worktree: Ultron skips jw/* ones, so it stays invisible), started there with
+  # --cwd; the header names the worktree before the spawn, so a failed one is reused.
+  if [ $iso = 1 ]; then
+    iso_prepare "$brief"
+    iso_cargo "$ISO_WT"
+    iso_header "$brief" "$ISO_WT" "$ISO_BR" || echo "jarvis: couldn't record isolate: in $brief (no started: line?)" >&2
+    prompt="$(iso_prompt "$brief" "$after")"
+    [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists."
+    [ -n "$answers" ] && ask=${ask/ $blocked./ $(iso_abs "$blocked").}
+    prompt="$prompt $ask"
+    isotag=" · isolate: $ISO_WT · branch: $ISO_BR"
+  fi
+
+  # The project comes from $ULTRON_PROJECT_ID inside the CLI; the cwd is this checkout
+  # (a branch Jarvis's worktree, named too so the worker lands in it for sure).
+  # --brief records the brief on the session (and titles it by its stem); the prompt points at it.
+  set -- --agent "$worker" --role worker --brief "$brief" --prompt "$prompt" --json
+  [ -n "$WT" ] && set -- "$@" --worktree "$WT"
+  [ $iso = 1 ] && set -- "$@" --cwd "$ISO_WT"
+  case "$worker" in
+    opencode|grok) [ -n "$model" ] && case "$model" in \<*) ;; *) set -- "$@" --model "$model" ;; esac ;;
+    *) set -- "$@" --model "$model"; [ -n "$effort" ] && set -- "$@" --effort "$effort" ;;
+  esac
+  # --force here also lifts the daemon's own machine-wide Claude cap
+  [ $force = 1 ] && set -- "$@" --force
+  # a retry of this spawn gets the session the first try started
+  takes_request_id && set -- "$@" --request-id "$rid"
+  if [ "$worker" = claude ] && [ -n "$account" ]; then
+    set -- "$@" --account "$account"
+    effort="${effort:+$effort }acct $account"
+  fi
+  if [ $dry = 1 ]; then
+    id="dry-$(date +%s)-$$"
+    echo "no session (--no-terminal): from $ROOT, run:"
+    printf '  ultron agent spawn'; printf ' %q' "$@"; echo
+  else
+    out=$(ultron agent spawn "$@" 2>&1) || die "spawn failed (the daemon's Claude cap, or a usage limit — a failed Claude spawn in red means Codex${account:+; for account $account, check ultron account list}): $out${isotag:+ (the worktree $ISO_WT stays; spawn again to reuse it)}"
+    id=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
+    [ -n "$id" ] || die "no session id in: $out"
+  fi
+
+  sed -i.bak -E "s/^started:.*/started: $(date '+%Y-%m-%d %H:%M') · terminal: $id/" "$brief" && rm -f "$brief.bak"
+  brief_follows "$brief" "$follow" "$after" "$why" || echo "jarvis: couldn't record ${follow:-follow} in $brief (no started: line?)" >&2
+  line="- $(date '+%Y-%m-%d %H:%M') · $worker/${model:-default}${effort:+ $effort} · term $id · $brief$isotag"
+  open_add_running "$line"
+  [ -n "$oldterm" ] && echo "answered as a fresh worker: closed $(short "$oldterm"), the answers and $blocked are in the brief"
+  echo "spawned $(short "$id")${ASKS:+ · $ASKS ·} $worker/${model:-default}${effort:+ $effort} ← $brief${isotag:+ · isolated on $ISO_BR} ($(cap_line))"
+}
+
+# ---------------------------------------------------------------- merge
+
+listed_files() { # the paths under "## Files" in a handoff
+  awk '/^## /{on = ($0 ~ /^## Files/); next} on && /^[[:space:]]*[-*] /' "$1" \
+    | sed -E -e 's/^[[:space:]]*[-*][[:space:]]+//' -e 's/`//g' \
+             -e 's/[[:space:]]+(—|–|--|-|\().*$//' -e 's/[[:space:]]+$//' -e 's/[,;]+$//' \
+    | grep -v '^path/relative' | grep -v '^$'
+}
+
+changed_paths() { # every changed/untracked path, renames as their new path
+  git status --porcelain -uall 2>/dev/null | cut -c4- | sed -e 's/.* -> //' -e 's/^"//' -e 's/"$//'
+}
+
+# The brief's "## Checks" section says `none`: checks don't apply to its work.
+checks_none() {
+  [ -f "$1" ] || return 1
+  awk '/^## /{on = ($0 ~ /^## Checks[[:space:]]*$/); next} on && NF {print; exit}' "$1" \
+    | tr -d '`' | tr 'A-Z' 'a-z' | grep -qE '^[[:space:]]*none([^a-z0-9]|$)'
+}
+
+# The last `ultron check` run of any session working brief $1: "green",
+# "red <the first failing command>", or nothing when none was recorded (or jq,
+# or an ultron with `check`, is missing).
+checks_state() {
+  have jq && have ultron || return 0
+  ultron check --last --brief "$1" --json 2>/dev/null | jq -r '
+    if type != "object" then empty
+    elif .passed then "green"
+    else "red " + ([.commands[]? | select(.exit != 0 or .timed_out == true) | .cmd][0] // "") end' 2>/dev/null
+}
+
+# Ultron's own run of the checks on handoff $1 (the daemon runs them once the worker hands
+# off and writes a `## Checks (run by Ultron)` section into it): "queued" or "running"
+# while one is coming (`ultron check --handoff`; skipped without jq or ultron), else
+# "passed" or "failed <checks>" from the section, else nothing.
+ultron_checks() {
+  local state first
+  if have jq && have ultron; then
+    state=$(ultron check --handoff "$1" --json 2>/dev/null | jq -r '
+      if type == "object" and (.state == "queued" or .state == "running") then .state else empty end' 2>/dev/null)
+    [ -n "$state" ] && { echo "$state"; return 0; }
+  fi
+  first=$(awk '/^## /{on = ($0 ~ /^## Checks \(run by Ultron\)[[:space:]]*$/); next} on && NF {print; exit}' "$1" 2>/dev/null)
+  case "$first" in
+    Passed*) echo passed ;;
+    Failed*) echo "failed $(printf '%s' "$first" | sed -E 's/^Failed:?[[:space:]]*//; s/[[:space:]]+·.*$//')" ;;
+  esac
+}
+
+# Ultron's run on handoff $1, for merge: prints its line and sets red=1 and red_why
+# (cmd_merge's locals) when it failed or hasn't finished; returns 1 when there's none.
+merge_ultron_checks() {
+  local u
+  u=$(ultron_checks "$1")
+  case "$u" in
+    passed) echo "  checks: passed (Ultron ran them on the handoff)" ;;
+    failed*) echo "  ✗ checks: failed (Ultron ran them on the handoff) — ${u#failed }"; red=1; red_why="checks are red (${u#failed })" ;;
+    queued|running) echo "  ✗ checks: Ultron is still running them on the handoff"; red=1; red_why="Ultron's checks on this handoff haven't finished — wait for its next handoff.written (the result lands in the handoff)" ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# Before anything changes: refuse while red is set, unless --anyway "<reason>" was given.
+checks_gate() {
+  [ $red = 1 ] && [ -z "$anyway" ] && die "$red_why — send it back to fix them, or --anyway \"<reason>\" (a brief whose ## Checks says \`none\` skips this)"
+  return 0
+}
+
+# After the other gates: --anyway "<reason>" is logged in the handoff ($1), like
+# --skip-second-opinion's.
+checks_anyway_log() {
+  [ -n "$anyway" ] || return 0
+  grep -qF "Merged anyway: $anyway" "$1" 2>/dev/null ||
+    printf '\n## Checks override\nMerged anyway: %s (%s)\n' "$anyway" "$(date '+%Y-%m-%d %H:%M')" >> "$1"
+  echo "  checks overridden: $anyway (logged in the handoff)"
+}
+
+# Print the checks line for merge (brief $1, handoff $2); sets red=1 and red_why
+# (cmd_merge's locals) when they're red. Ultron's run on the handoff decides when there
+# is one; else the brief's last `ultron check` run.
+merge_checks() {
+  local checks
+  if checks_none "$1"; then
+    echo "  checks: none (the brief's ## Checks says so)"
+  elif ! merge_ultron_checks "$2"; then
+    checks=$(checks_state "$1")
+    case "$checks" in
+      green) echo "  checks: green" ;;
+      red*) echo "  ✗ checks: red — ${checks#red }"; red=1; red_why="checks are red" ;;
+      *) echo "  checks: no \`ultron check\` run recorded for this brief" ;;
+    esac
+  fi
+}
+
+# A second opinion (`ultron review second`): the project's policy (Project settings →
+# "Second opinion before merging": off, on big changes, always) may want one before
+# merging. Prints its line and sets so_block (cmd_merge's local) when the merge must
+# wait: one is needed and there's none, or it's stale, running or failed; or its
+# verdict is Blocking. Fails open: no jq, no ultron, or an ultron without it says nothing.
+second_opinion() {
+  local v state needed reason review
+  have jq && have ultron || return 0
+  v=$(ultron review second "$1" --status --json 2>/dev/null) || return 0
+  state=$(printf '%s' "$v" | jq -r '.state // empty' 2>/dev/null)
+  [ -n "$state" ] || return 0
+  needed=$(printf '%s' "$v" | jq -r '.policy.needed // false')
+  reason=$(printf '%s' "$v" | jq -r '.policy.reason // ""')
+  review=$(printf '%s' "$v" | jq -r '.review // ""')
+  if [ "$state" = done ]; then
+    echo "  second opinion: $(printf '%s' "$v" | jq -r '.verdict_text // "no verdict"') · $review"
+    [ "$(printf '%s' "$v" | jq -r '.verdict // ""')" = blocking ] && so_block="the second opinion is Blocking ($review)"
+    return 0
+  fi
+  case "$state" in
+    stale) echo "  second opinion: stale, the handoff changed after it · $review" ;;
+    running) echo "  second opinion: still running" ;;
+    failed) echo "  second opinion: failed — $(printf '%s' "$v" | jq -r '.error // ""')" ;;
+    *) echo "  second opinion: none" ;;
+  esac
+  if [ "$needed" = true ]; then
+    echo "  ✗ the project wants one before merging: $reason"
+    so_block="this handoff needs a second opinion first ($reason)"
+  else
+    echo "    not needed: $reason"
+  fi
+}
+
+# After second_opinion, before anything changes: refuse while so_block is set, unless
+# --skip-second-opinion "<reason>" was given, which is logged in the handoff ($1).
+second_opinion_gate() {
+  if [ -n "$skip_so" ]; then
+    grep -qF "Skipped at merge: $skip_so" "$1" 2>/dev/null ||
+      printf '\n## Second opinion\nSkipped at merge: %s (%s)\n' "$skip_so" "$(date '+%Y-%m-%d %H:%M')" >> "$1"
+    echo "  second opinion skipped: $skip_so (logged in the handoff)"
+  elif [ -n "$so_block" ]; then
+    die "$so_block — run \`ultron review second $1\`, send Blocking findings back to a worker, or --skip-second-opinion \"<reason>\""
+  fi
+}
+
+cmd_merge() {
+  local ho="" check=0 msg="" outcome="" push="$JARVIS_PUSH" keep=0 force=0 so_block="" skip_so="" rv=""
+  local anyway="" red_why=""
+  local status brief agent files f bad=0 red=0 checks other title dest trailer sha term old_tracked=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      -m) msg="${2:-}"; shift 2 ;;
+      --outcome) outcome="${2:-}"; shift 2 ;;
+      --no-push) push=0; shift ;;
+      --keep-open) keep=1; shift ;;
+      --force) force=1; shift ;;
+      --skip-second-opinion) skip_so="${2:-}"; [ -n "$skip_so" ] || die "--skip-second-opinion needs a reason"; shift 2 ;;
+      --anyway) anyway="${2:-}"; [ -n "$anyway" ] || die "--anyway needs a reason"; shift 2 ;;
+      *) ho="$1"; shift ;;
+    esac
+  done
+  [ -f "$ho" ] || die "usage: jarvis merge <handoffs/file.md> [--check] [-m msg] [--outcome clean|corrected|escalated|respawned] [--no-push] [--keep-open]"
+  status=$(field status "$ho" | awk '{print $1}')
+  brief=$(field brief "$ho" | awk '{print $1}')
+  agent=$(field agent "$ho")
+  # a handoff that lists itself would break `git add` after the move below
+  files=$(listed_files "$ho" | grep -vxF "$ho")
+  [ -n "$files" ] || die "$ho lists no files under ## Files"
+
+  # an isolated worker's handoff: its branch is committed in its worktree and git-merged here
+  if [ -n "$brief" ] && [ -f "$brief" ]; then
+    case "$(iso_path "$brief")" in ""|no|yes) ;; *) merge_isolated; return ;; esac
+  fi
+
+  echo "$ho · status: $status · brief: ${brief:-none}"
+  for f in $files; do
+    if changed_paths | grep -qxF "$f"; then :; else
+      echo "  ✗ listed but not changed: $f"; bad=1
+    fi
+  done
+  other=$(changed_paths | grep -v "^$H/" | grep -vxF "$files")
+  if [ -n "$other" ]; then
+    echo "  other changes in the checkout (another worker's, or missing from this list):"
+    printf '%s\n' "$other" | head -n 12 | sed 's/^/    /'
+  fi
+  git diff --stat -- $files 2>/dev/null | sed 's/^/  /'
+  for f in $files; do
+    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || [ ! -f "$f" ] || echo "   new: $f ($(wc -l < "$f" | tr -d ' ') lines)"
+  done
+  merge_checks "$brief" "$ho"
+  second_opinion "$ho"
+  [ $check = 1 ] && { [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
+
+  [ "$status" = blocked ] && die "status is blocked — answer its questions first"
+  checks_gate
+  [ $bad = 1 ] && [ $force = 0 ] && die "file list doesn't match git status — send it back, or --force"
+  second_opinion_gate "$ho"
+  checks_anyway_log "$ho"
+
+  mkdir -p "$H/merged"
+  dest="$H/merged/$(basename "$ho")"
+  term=$(sed -n 's/.*terminal:[[:space:]]*\([^ ]*\).*/\1/p' "$brief" 2>/dev/null | head -n 1)
+  case "$term" in ""|\<*) term="" ;; esac
+  [ -n "$brief" ] && open_drop "$brief"
+  open_drop "$(basename "$ho")"
+  git ls-files --error-unmatch -- "$ho" >/dev/null 2>&1 && old_tracked=1
+  mv "$ho" "$dest"
+  set -- $files "$dest"
+  rv="$H/reviews/$(basename "$ho" .md)-second.md"; [ -f "$rv" ] && set -- "$@" "$rv"
+  [ $old_tracked = 1 ] && set -- "$@" "$ho"
+  [ -n "$brief" ] && [ -f "$brief" ] && set -- "$@" "$brief"
+  [ -f "$OPEN" ] && set -- "$@" "$OPEN"
+  # a path the worker already `git rm`-ed is in neither the tree nor the index: its deletion is staged, and `git add` would fail on it
+  for f; do { [ -e "$f" ] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; } || continue; git add -A -- "$f" || die "git add failed: $f"; done
+
+  title=$(sed -n '1s/^#[[:space:]]*//p' "$dest")
+  [ -n "$msg" ] || msg="$title"
+  trailer=""
+  case "$agent" in
+    claude*) trailer="Co-Authored-By: Claude Code <$(printf '%s' "$agent" | awk '{print $2}')> worker" ;;
+    codex*) trailer="Co-Authored-By: Codex <$(printf '%s' "$agent" | awk '{print $2}')> worker" ;;
+    opencode*) trailer="Co-Authored-By: OpenCode <$(printf '%s' "$agent" | awk '{print $2}')> worker" ;;
+    grok*) trailer="Co-Authored-By: Grok <$(printf '%s' "$agent" | awk '{print $2}')> worker" ;;
+  esac
+  if [ -n "$trailer" ]; then
+    git commit -q -m "$msg" -m "$trailer" -- "$@" || die "commit failed"
+  else
+    git commit -q -m "$msg" -- "$@" || die "commit failed"
+  fi
+  sha=$(git rev-parse --short HEAD)
+  line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files"
+
+  if [ "$push" = 1 ]; then
+    # Ultron's gate check (the pre-push hook) may refuse a push to main; the commit stays.
+    # A branch Jarvis pushes its branch (with -u the first time: a new one has no upstream).
+    set -- -q
+    if [ -n "$WT" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+      set -- -q -u origin "$(git branch --show-current)"
+    fi
+    if git push "$@" 2>/dev/null; then line="$line · pushed"; else line="$line · push refused, so the commit stays local until the next allowed push"; fi
+  else
+    line="$line · not pushed (--no-push or JARVIS_PUSH=0)"
+  fi
+  if [ $keep = 0 ] && [ -n "$term" ] && have ultron; then
+    ultron term close "$term" --json $(rid_flag merge "$ho" "$term") >/dev/null 2>&1 && line="$line · closed $(short "$term")"
+  fi
+  if [ -n "$outcome" ] && [ -x "$BIN/jev.sh" ] && [ -n "$brief" ]; then
+    "$BIN/jev.sh" outcome "$brief" "$outcome" >/dev/null 2>&1
+  fi
+  echo "$line · OPEN.md updated in the same commit"
+  return 0
+}
+
+# ---------------------------------------------------------------- isolated workers
+
+# A brief with `isolate: yes` (or spawned with --isolate) runs in its own git worktree
+# at $WT_ROOT/<repo>/<slug>, on branch jw/<slug> from HEAD; spawn rewrites the line to
+# `isolate: <worktree> · branch: jw/<slug>`, and merge reads it back. The worker edits
+# and builds only there and writes its handoff into this checkout's handoffs/, so
+# `jarvis events` sees it. Merge commits the listed files on the branch inside the
+# worktree, then `git merge --no-ff`s the branch here. --no-ff rather than rebase +
+# fast-forward: a conflict is resolved by merging the main branch INTO jw/<slug>, and a
+# rebase would replay the original commits and hit the same conflict again. The merge
+# is tried first with `git merge-tree` (no working tree), so a conflict never touches
+# this checkout; it writes a merge brief instead (see iso_conflict).
+
+REPO_NAME=$(basename "$ROOT")
+
+iso_slug() { basename "$1" .md | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-//'; }
+iso_path() { field isolate "$1" | sed -E 's/[[:space:]]*·[[:space:]]*branch:.*$//; s/[[:space:]]+$//'; }
+iso_branch() { field isolate "$1" | sed -n 's/.*branch:[[:space:]]*\([^ ]*\).*/\1/p'; }
+iso_target() { echo "$WT_ROOT/$REPO_NAME/target"; }
+iso_abs() { case "$1" in /*) echo "$1" ;; *) echo "$ROOT/$1" ;; esac; }
+
+# Write `isolate: $2 · branch: $3` into brief $1's header, under started: (replacing one).
+iso_header() {
+  awk -v val="$2 · branch: $3" '
+    /^## / { body = 1 }
+    !body && /^isolate:/ { next }
+    { print }
+    !body && !done && /^started:/ { print "isolate: " val; done = 1 }
+    END { if (!done) exit 3 }
+  ' "$1" > "$1.tmp" || { rm -f "$1.tmp"; return 1; }
+  mv "$1.tmp" "$1"
+}
+
+# The worktree for brief $1: the one its header names, else a new one. Sets ISO_WT, ISO_BR.
+iso_prepare() {
+  local brief=$1 v slug wt br n=2 real
+  v=$(iso_path "$brief")
+  if [ -n "$v" ] && [ "$v" != yes ]; then
+    wt=$v; br=$(iso_branch "$brief")
+    git -C "$wt" rev-parse --git-dir >/dev/null 2>&1 || die "isolate: $wt in $brief is not a worktree any more — set the line to 'isolate: yes' for a fresh one"
+    [ -n "$br" ] || br=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null)
+    echo "isolated: reusing $wt ($br)"
+  else
+    slug=$(iso_slug "$brief"); [ -n "$slug" ] || die "no slug in $brief's name"
+    case "$WT_ROOT/" in "$ROOT"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is inside the repo: Ultron would list the worktrees as branch Jarvises" ;; esac
+    mkdir -p "$WT_ROOT/$REPO_NAME" || die "can't create $WT_ROOT/$REPO_NAME"
+    real=$(cd "$WT_ROOT/$REPO_NAME" && pwd -P)
+    case "$real/" in
+      "$(cd "$ROOT" && pwd -P)"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is inside the repo: Ultron would list the worktrees as branch Jarvises" ;;
+      "$(cd "${ULTRON_HOME:-$HOME/.ultron}" 2>/dev/null && pwd -P || echo /nonexistent)"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is under ~/.ultron — put it somewhere else" ;;
+    esac
+    wt="$real/$slug"; br="jw/$slug"
+    while [ -e "$wt" ] || git show-ref --verify --quiet "refs/heads/$br"; do
+      wt="$real/$slug-$n"; br="jw/$slug-$n"; n=$((n + 1))
+    done
+    git worktree add -q -b "$br" "$wt" HEAD >/dev/null 2>&1 || die "git worktree add $wt failed"
+    echo "isolated: new worktree $wt on $br from $(git rev-parse --short HEAD)"
+  fi
+  iso_links "$wt"
+  ISO_WT=$wt; ISO_BR=$br
+}
+
+# The main checkout's node_modules folders (at the top and one folder down), linked into
+# worktree $1 so nothing needs installing. Only where git ignores the link: a
+# `node_modules/` pattern matches folders, not links, so the link would show as a change.
+iso_links() {
+  local d
+  for d in node_modules */node_modules; do
+    [ -d "$ROOT/$d" ] && [ -d "$1/$(dirname "$d")" ] && [ ! -e "$1/$d" ] && [ ! -L "$1/$d" ] || continue
+    ln -s "$ROOT/$d" "$1/$d" || continue
+    git -C "$1" check-ignore -q "$d" && continue
+    rm -f "$1/$d"
+    echo "isolated: didn't link $d: git doesn't ignore it as a link (add \`$d\` without a trailing slash to .gitignore)"
+  done
+}
+
+# Isolated cargo builds share one target/ (iso_target), not one per worktree. `ultron agent
+# spawn` can't set CARGO_TARGET_DIR, so a cargo config next to the worktrees sets
+# build.target-dir: cargo reads .cargo/config.toml in every parent of the folder it runs in.
+# A config there that jarvis didn't write is left alone.
+iso_cargo() {
+  local f="$WT_ROOT/$REPO_NAME/.cargo/config.toml"
+  [ -f "$1/Cargo.toml" ] || return 0
+  if [ -f "$f" ] && ! grep -q '^# written by jarvis' "$f"; then
+    echo "isolated: left $f alone (jarvis didn't write it); builds go where it says"
+    return 0
+  fi
+  mkdir -p "$(dirname "$f")" || return 0
+  printf '# written by jarvis spawn --isolate: isolated worktrees build into one shared folder\n[build]\ntarget-dir = "%s"\n' "$(iso_target)" > "$f"
+}
+
+# The prompt for an isolated worker on brief $1 in ISO_WT/ISO_BR ($2 = the --after handoff).
+iso_prompt() {
+  local prompt mainbr
+  mainbr=$(git symbolic-ref --short HEAD 2>/dev/null || echo main)
+  prompt="You are a Jarvis worker. Read AGENTS.md, then do the task in $(iso_abs "$1")."
+  [ -n "$2" ] && prompt="$prompt $(iso_abs "$2") records what is already done — start from there."
+  prompt="$prompt You are isolated: your working directory $ISO_WT is your own git worktree on branch $ISO_BR, so edit, build and test only inside it (the brief's repo paths are relative to it). Write your handoff to the main checkout, $ROOT/handoffs/ (an absolute path), and list files relative to the repo as usual."
+  if [ -n "$(field merges "$1")" ]; then
+    prompt="$prompt This brief is a merge: run git merge $mainbr inside $ISO_WT — the one git command you may run that changes state (git merge --abort to start over); never commit, Jarvis commits the merge."
+  else
+    prompt="$prompt Still never run git commands that change state: Jarvis commits your branch."
+  fi
+  printf '%s' "$prompt"
+}
+
+# For `status`: an isolated running line $1 gets its branch and how far behind it is.
+iso_status() {
+  local br behind mainbr
+  br=$(printf '%s' "$1" | sed -n 's/.* · branch: \([^ ]*\).*/\1/p')
+  [ -n "$br" ] || return 0
+  mainbr=$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)
+  if git show-ref --verify --quiet "refs/heads/$br"; then
+    behind=$(git rev-list --count "$br..HEAD" 2>/dev/null || echo ?)
+    printf '      isolated on %s · %s commit(s) behind %s\n' "$br" "$behind" "$mainbr"
+  else
+    printf '      isolated on %s · branch is gone\n' "$br"
+  fi
+}
+
+worker_trailer() { # $1 = the handoff's agent: line
+  case "$1" in
+    claude*) echo "Co-Authored-By: Claude Code <$(printf '%s' "$1" | awk '{print $2}')> worker" ;;
+    codex*) echo "Co-Authored-By: Codex <$(printf '%s' "$1" | awk '{print $2}')> worker" ;;
+    opencode*) echo "Co-Authored-By: OpenCode <$(printf '%s' "$1" | awk '{print $2}')> worker" ;;
+    grok*) echo "Co-Authored-By: Grok <$(printf '%s' "$1" | awk '{print $2}')> worker" ;;
+  esac
+}
+
+# Every path changed in worktree $1 since commit $2: committed, uncommitted, untracked.
+iso_changed() {
+  { git -C "$1" diff --name-only "$2" -- 2>/dev/null
+    git -C "$1" ls-files --others --exclude-standard 2>/dev/null; } | sort -u
+}
+
+# cmd_merge for an isolated handoff; uses its locals (ho, check, msg, outcome, push, keep,
+# force, status, brief, agent, files, red, red_why, anyway).
+merge_isolated() {
+  local wt br mainbr base merging=0 changed other f bad=0 unmerged dirty trailer title
+  local mt rc tree conflicts touched outside dest term old_tracked=0 orig obrief oterm sha line left
+  wt=$(iso_path "$brief"); br=$(iso_branch "$brief")
+  git -C "$wt" rev-parse --git-dir >/dev/null 2>&1 || die "$brief says isolate: $wt, but that worktree is gone"
+  [ -n "$br" ] || br=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null)
+  git show-ref --verify --quiet "refs/heads/$br" || die "no branch $br"
+  mainbr=$(git symbolic-ref --short HEAD 2>/dev/null) || die "the main checkout isn't on a branch"
+  if git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    merging=1; base=$(git -C "$wt" rev-parse MERGE_HEAD)   # a merge brief's `git merge main`, not committed yet
+  else
+    base=$(git merge-base HEAD "$br") || die "$br shares no history with $mainbr"
+  fi
+
+  echo "$ho · status: $status · brief: $brief · isolated: $br in $wt"
+  changed=$(iso_changed "$wt" "$base")
+  for f in $files; do
+    printf '%s\n' "$changed" | grep -qxF "$f" || { echo "  ✗ listed but not changed (in the worktree): $f"; bad=1; }
+  done
+  other=$(printf '%s\n' "$changed" | grep -v "^$H/" | grep -vxF "$files" | grep -v '^$')
+  if [ -n "$other" ]; then
+    echo "  other changes in the worktree (missing from this list; they are not merged):"
+    printf '%s\n' "$other" | head -n 12 | sed 's/^/    /'
+  fi
+  # the worker doesn't stage, so a conflicted path still shows unmerged in the index: it's
+  # resolved once its markers are gone (and it's listed, so the commit stages it)
+  unmerged=""
+  for f in $(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null); do
+    if [ -f "$wt/$f" ] && grep -qE '^(<<<<<<<|>>>>>>>)( |$)' "$wt/$f"; then unmerged="$unmerged$f (conflict markers)
+"
+    elif ! printf '%s\n' $files | grep -qxF "$f"; then unmerged="$unmerged$f (not in the handoff's list)
+"
+    fi
+  done
+  unmerged=$(printf '%s' "$unmerged" | grep -v '^$')
+  [ -z "$unmerged" ] || { echo "  ✗ unresolved conflicts in the worktree:"; printf '%s\n' "$unmerged" | sed 's/^/    /'; bad=1; }
+  git -C "$wt" diff --stat "$base" -- $files 2>/dev/null | sed 's/^/  /'
+  for f in $files; do
+    git -C "$wt" cat-file -e "$base:$f" 2>/dev/null || [ ! -f "$wt/$f" ] || echo "   new: $f ($(wc -l < "$wt/$f" | tr -d ' ') lines)"
+  done
+  dirty=$(git status --porcelain -uall -- $files 2>/dev/null | cut -c4- | sed -e 's/.* -> //' -e 's/^"//' -e 's/"$//')
+  [ -z "$dirty" ] || { echo "  ✗ uncommitted changes in the main checkout in listed files:"; printf '%s\n' "$dirty" | sed 's/^/    /'; }
+  merge_checks "$brief" "$ho"   # Ultron's run on the handoff, else the brief's last `ultron check`; sets red
+  second_opinion "$ho"
+  [ $check = 1 ] && { [ -z "$dirty" ] && [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
+
+  [ "$status" = blocked ] && die "status is blocked — answer its questions first"
+  checks_gate
+  [ -z "$unmerged" ] || die "resolve the conflicts in $wt first"
+  [ $bad = 1 ] && [ $force = 0 ] && die "file list doesn't match the worktree — send it back, or --force"
+  [ -z "$dirty" ] || die "the main checkout has uncommitted changes in listed files — commit or move them first"
+  git diff --cached --quiet || die "the main checkout has staged changes; the merge commit would take them — commit or unstage them first"
+  second_opinion_gate "$ho"
+  checks_anyway_log "$ho"
+
+  # 1. commit the listed files on the branch, inside the worktree
+  title=$(sed -n '1s/^#[[:space:]]*//p' "$ho")
+  [ -n "$msg" ] || msg="$title"
+  trailer=$(worker_trailer "$agent")
+  for f in $files; do
+    { [ -e "$wt/$f" ] || git -C "$wt" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; } || continue
+    git -C "$wt" add -A -- "$f" || die "git add failed in $wt: $f"
+  done
+  if [ $merging = 1 ]; then
+    git -C "$wt" commit -q --no-edit -m "$msg" -m "Merges $mainbr into $br." ${trailer:+-m "$trailer"} || die "commit of the merge in $wt failed"
+  elif ! git -C "$wt" diff --cached --quiet -- $files; then
+    git -C "$wt" commit -q -m "$msg" ${trailer:+-m "$trailer"} -- $files || die "commit in $wt failed"
+  else
+    echo "  $br already has the listed files committed"
+  fi
+
+  # 2. try the merge without a working tree: conflicts, and what it would touch here
+  mt=$(git merge-tree --write-tree --name-only --no-messages HEAD "$br" 2>&1); rc=$?
+  if [ $rc = 1 ]; then
+    conflicts=$(printf '%s\n' "$mt" | sed '1d' | grep -v '^$' | sort -u)
+    iso_conflict
+    return 1
+  fi
+  [ $rc = 0 ] || die "git merge-tree failed: $mt"
+  tree=$(printf '%s\n' "$mt" | sed -n 1p)
+  touched=$(git diff --name-only HEAD "$tree")
+  [ -n "$touched" ] || die "$br adds nothing to $mainbr"
+  outside=$(printf '%s\n' "$touched" | grep -vxF "$files" | grep -v '^$')
+  [ -z "$outside" ] || die "merging $br would also change paths not in the handoff: $(printf '%s ' $outside)— list them, or fix the branch in $wt"
+  dirty=$(git status --porcelain -uall -- $touched 2>/dev/null)
+  [ -z "$dirty" ] || die "the main checkout has uncommitted changes in paths the merge touches: $(printf '%s' "$dirty" | cut -c4- | tr '\n' ' ')"
+
+  # 3. the real merge, then the bookkeeping folded into the merge commit
+  if ! git merge -q --no-ff --no-edit -m "$msg" -m "Merges $br (isolated worker)." "$br" >/dev/null 2>&1; then
+    git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && git merge --abort
+    die "git merge $br failed; the main checkout is as it was"
+  fi
+
+  mkdir -p "$H/merged"
+  dest="$H/merged/$(basename "$ho")"
+  term=$(sed -n 's/.*terminal:[[:space:]]*\([^ ]*\).*/\1/p' "$brief" 2>/dev/null | head -n 1)
+  case "$term" in ""|\<*) term="" ;; esac
+  open_drop "$brief"
+  open_drop "$(basename "$ho")"
+  git ls-files --error-unmatch -- "$ho" >/dev/null 2>&1 && old_tracked=1
+  mv "$ho" "$dest"
+  set -- "$dest"
+  rv="$H/reviews/$(basename "$ho" .md)-second.md"; [ -f "$rv" ] && set -- "$@" "$rv"
+  [ $old_tracked = 1 ] && set -- "$@" "$ho"
+  [ -f "$brief" ] && set -- "$@" "$brief"
+  # a merge brief's handoff closes the original one too: its handoff, brief and terminal
+  orig=$(field merges "$brief")
+  if [ -n "$orig" ] && [ -f "$orig" ]; then
+    obrief=$(field brief "$orig" | awk '{print $1}')
+    oterm=$(sed -n 's/.*terminal:[[:space:]]*\([^ ]*\).*/\1/p' "$obrief" 2>/dev/null | head -n 1)
+    [ -n "$obrief" ] && open_drop "$obrief"
+    open_drop "$(basename "$orig")"
+    git ls-files --error-unmatch -- "$orig" >/dev/null 2>&1 && set -- "$@" "$orig"
+    mv "$orig" "$H/merged/$(basename "$orig")"; set -- "$@" "$H/merged/$(basename "$orig")"
+    [ -n "$obrief" ] && [ -f "$obrief" ] && set -- "$@" "$obrief"
+  fi
+  [ -f "$OPEN" ] && set -- "$@" "$OPEN"
+  for f; do { [ -e "$f" ] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; } || continue; git add -A -- "$f" || die "git add failed: $f"; done
+  git commit -q --amend --no-edit -- "$@" || die "folding the handoff move into the merge commit failed (the merge itself is committed)"
+  sha=$(git rev-parse --short HEAD)
+  line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files from $br"
+
+  if [ "$push" = 1 ]; then
+    # Ultron's gate check (the pre-push hook) may refuse a push to main; the commit stays.
+    if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push refused, so the commit stays local until the next allowed push"; fi
+  else
+    line="$line · not pushed (--no-push or JARVIS_PUSH=0)"
+  fi
+  if [ $keep = 0 ] && have ultron; then
+    [ -n "$term" ] && ultron term close "$term" --json $(rid_flag merge "$ho" "$term") >/dev/null 2>&1 && line="$line · closed $(short "$term")"
+    case "${oterm:-}" in ""|\<*) ;; *) ultron term close "$oterm" --json $(rid_flag merge "$ho" "$oterm") >/dev/null 2>&1 && line="$line · closed $(short "$oterm")" ;; esac
+  fi
+  if [ -n "$outcome" ] && [ -x "$BIN/jev.sh" ]; then
+    "$BIN/jev.sh" outcome "$brief" "$outcome" >/dev/null 2>&1
+  fi
+
+  # 4. the worktree and branch go, unless the worker left files there that weren't listed
+  left=$(git -C "$wt" status --porcelain -uall 2>/dev/null)
+  if [ -n "$left" ]; then
+    line="$line · kept $wt: $(printf '%s\n' "$left" | wc -l | tr -d ' ') unlisted change(s) there (jarvis clean-worktrees removes it)"
+  elif git worktree remove --force "$wt" >/dev/null 2>&1 && git branch -q -d "$br" >/dev/null 2>&1; then
+    line="$line · removed $br and its worktree"
+  else
+    line="$line · couldn't remove $wt / $br (jarvis clean-worktrees)"
+  fi
+  echo "$line · OPEN.md updated in the same commit"
+  return 0
+}
+
+# merge_isolated's conflict path: nothing here changed (merge-tree needs no working tree),
+# the worktree and branch stay, and a ready-to-spawn merge brief is written: an opus/high
+# isolated worker merges the main branch into jw/<slug> there, keeping both intents.
+iso_conflict() {
+  local f sha m others="" ts mb slug tasks checks
+  echo "conflict merging $br into $mainbr (nothing in the main checkout changed):"
+  printf '%s\n' "$conflicts" | sed 's/^/  /'
+  for f in $conflicts; do # the handoffs merged on the main branch that touched these paths
+    for sha in $(git log --first-parent --format=%H "$(git merge-base HEAD "$br")..HEAD" -- "$f" 2>/dev/null); do
+      # against the first parent: an isolated merge's handoff move is in the merge commit
+      for m in $(git diff-tree --no-commit-id --name-only -r --diff-filter=A "$sha^1" "$sha" -- "$H/merged/" 2>/dev/null); do
+        case " $others " in *" $m "*) ;; *) others="$others $m" ;; esac
+      done
+    done
+  done
+  ts=$(date '+%Y-%m-%d-%H%M'); slug=${br#jw/}
+  mb="$H/briefs/$ts-merge-$slug.md"
+  tasks=$(awk '/^## /{exit} /^Tasks:/{print; exit}' "$brief")
+  checks=$(awk '/^## /{on = ($0 ~ /^## Checks/); next} on' "$brief" | sed -e '/./,$!d')
+  {
+    echo "# Merge $mainbr into $br: conflicts in $(printf '%s ' $conflicts | sed 's/ $//')"
+    echo "worker: claude"
+    echo "model: claude-opus-5-5"
+    echo "effort: high"
+    echo "started: <filled in by jarvis spawn>"
+    [ -n "$tasks" ] && echo "$tasks"
+    echo "isolate: $wt · branch: $br"
+    echo "merges: $ho"
+    echo
+    echo "## Goal"
+    echo "Branch \`$br\` (worktree \`$wt\`) and \`$mainbr\` both changed the same lines. In that worktree, run \`git merge $mainbr\` and resolve every conflict so **both intents survive**: what \`$br\` did (its handoff, below) and what landed on \`$mainbr\` since it branched. Then build and test there, and hand off. Done = no conflict markers left, the checks below pass in the worktree, and the handoff lists every file."
+    echo
+    echo "## Context"
+    echo "- The branch's handoff (what it changed and why): \`$ROOT/$ho\`"
+    if [ -n "$others" ]; then
+      for m in $others; do echo "- Landed on \`$mainbr\` in these paths: \`$ROOT/$m\`"; done
+    else
+      echo "- What landed on \`$mainbr\` in these paths: \`git log $(git merge-base HEAD "$br" | cut -c1-9)..$mainbr -- <path>\` (no merged handoff found for it)"
+    fi
+    echo "- Conflicting paths:"
+    for f in $conflicts; do echo "  - \`$f\`"; done
+    echo
+    echo "## Scope"
+    echo "- Work only inside \`$wt\`. The one git command you run that changes state is \`git merge $mainbr\` there (\`git merge --abort\` to start over); read-only git is fine. Don't stage by hand, don't commit: Jarvis commits the merge."
+    echo "- May touch (in the worktree): $(printf '`%s` ' $files | sed 's/ $//')"
+    echo "- Must not touch: anything else, and nothing in the main checkout except your handoff."
+    echo
+    echo "## Phase"
+    echo "1. \`cd $wt && git merge $mainbr\`"
+    echo "2. Resolve each conflicting path by hand, keeping both changes; then the checks."
+    echo "3. Write the handoff to \`$ROOT/handoffs/$ts-merge-$slug.md\` with \`brief: $mb\`. Its \`## Files\` lists every file of the branch's handoff above, plus any other path you had to edit."
+    echo
+    echo "## Checks"
+    if [ -n "$checks" ]; then printf '%s\n' "$checks"; else echo "The repo's checks line (CLAUDE.md), run in the worktree."; fi
+    echo
+    echo "## Questions first"
+    echo "Put every question in one first handoff (\`status: blocked\`) and stop. After"
+    echo "the answers arrive on your terminal, finish this phase without stopping"
+    echo "again. If you have no questions, build straight through."
+  } > "$mb"
+  echo "kept $wt and $br. Merge brief written: $mb"
+  echo "  next: handoffs/bin/jarvis spawn $mb   (its handoff then merges through jarvis merge as usual)"
+}
+
+# Remove isolated worktrees and jw/* branches that no running worker uses and whose
+# handoff is merged (in handoffs/merged/, and the branch already in HEAD). List the rest.
+cmd_clean_worktrees() {
+  local wt br briefs b merged reason n=0 kept=0 entries
+  entries=$( { git worktree list --porcelain 2>/dev/null | awk '
+      /^worktree /{wt = substr($0, 10)} /^branch refs\/heads\/jw\//{print wt "\t" substr($0, 19)}'
+    for br in $(git for-each-ref --format='%(refname:short)' 'refs/heads/jw/'); do
+      git worktree list --porcelain 2>/dev/null | grep -qx "branch refs/heads/$br" || printf '\t%s\n' "$br"
+    done; } )
+  while IFS="$(printf '\t')" read -r wt br; do
+    [ -n "$br" ] || continue
+    reason=""
+    if running_lines | grep -q " · branch: $br\$"; then reason="a worker is running on it"
+    else
+      briefs=$(grep -l "^isolate:.*branch: $br\$" "$H"/briefs/*.md 2>/dev/null)
+      merged=0
+      for b in $briefs; do grep -lq "^brief:[[:space:]]*$b" "$H"/merged/*.md 2>/dev/null && merged=1; done
+      if [ $merged = 0 ]; then reason="its handoff isn't merged"
+      elif ! git merge-base --is-ancestor "$br" HEAD 2>/dev/null; then reason="its handoff is merged, but the branch has commits $(git symbolic-ref --short HEAD 2>/dev/null) doesn't"
+      fi
+    fi
+    if [ -n "$reason" ]; then
+      kept=$((kept + 1)); echo "kept $br${wt:+ ($wt)}: $reason"
+      continue
+    fi
+    [ -z "$wt" ] || git worktree remove --force "$wt" >/dev/null 2>&1 || { echo "couldn't remove $wt"; continue; }
+    git branch -q -D "$br" >/dev/null 2>&1 && { n=$((n + 1)); echo "removed $br${wt:+ and $wt}"; }
+  done <<EOF
+$entries
+EOF
+  git worktree prune 2>/dev/null
+  echo "clean-worktrees: $n removed · $kept kept"
+}
+
+# ---------------------------------------------------------------- events
+
+# For Claude Code's Monitor tool: Jarvis arms Monitor on `handoffs/bin/jarvis events`
+# and each stdout line arrives as a notification, so nothing is typed into its prompt.
+# `ultron jarvis events --follow` prints one "[jarvis event] …" line per handoff or
+# worker trouble for $ULTRON_PROJECT_ID's Jarvis (a branch Jarvis: its worktree's),
+# reconnecting across daemon restarts.
+cmd_events() {
+  need_ultron
+  ultron jarvis events --help >/dev/null 2>&1 \
+    || die "this ultron has no \`jarvis events\` yet — update Ultron (rebuild ultrond and the CLI), then re-arm"
+  if [ -n "$WT" ]; then
+    ultron jarvis events --help 2>/dev/null | grep -q -- --worktree \
+      || die "this ultron's \`jarvis events\` has no --worktree yet — update Ultron, then re-arm"
+    exec ultron jarvis events --follow --worktree "$WT"
+  fi
+  exec ultron jarvis events --follow
+}
+
+# ---------------------------------------------------------------- hooks
+
+# UserPromptSubmit, Jarvis's session only: after a long idle the prompt cache has
+# expired, and the next turn would write the whole context again. Stop the prompt
+# once and suggest clearing; sending it again goes through.
+hook_prompt() {
+  local in sid tp prompt last gap ctx model price usd marker how
+  have jq || exit 0
+  in=$(cat)
+  [ -n "$ME" ] && [ "$ME" = "$(jarvis_terminal)" ] || exit 0
+  sid=$(printf '%s' "$in" | jq -r '.session_id // empty')
+  tp=$(printf '%s' "$in" | jq -r '.transcript_path // empty')
+  prompt=$(printf '%s' "$in" | jq -r '.prompt // empty')
+  [ -n "$sid" ] && [ -f "$tp" ] || exit 0
+  mkdir -p "$STATE"
+  case "$prompt" in /*) exit 0 ;; esac
+
+  last=$(tail -n 400 "$tp" | jq -c 'select(.type == "assistant" and .message.usage) |
+      {t: .timestamp, m: .message.model, u: .message.usage}' 2>/dev/null | tail -n 1)
+  [ -n "$last" ] || exit 0
+  gap=$(printf '%s' "$last" | jq -r --argjson now "$(now)" \
+    '(.t | sub("\\.[0-9]+"; "") | fromdateiso8601) as $t | (($now - $t) / 60 | floor)' 2>/dev/null) || exit 0
+  ctx=$(printf '%s' "$last" | jq -r '.u | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)')
+  model=$(printf '%s' "$last" | jq -r '.m // ""')
+  [ "$gap" -ge "$JARVIS_IDLE_MIN" ] && [ "$ctx" -ge "$JARVIS_GUARD_TOKENS" ] || exit 0
+
+  marker="$STATE/guard-$sid"
+  if [ -f "$marker" ] && [ $(( $(now) - $(mtime "$marker") )) -lt 900 ]; then rm -f "$marker"; exit 0; fi
+  touch "$marker"
+  case "$model" in
+    *fable*) price=20 ;; *opus-5-5*) price=8 ;; *opus*) price=10 ;; *sonnet*) price=4 ;; *haiku*) price=2 ;; *) price=10 ;;
+  esac
+  usd=$(awk -v t="$ctx" -v p="$price" 'BEGIN{printf "%.2f", t * p / 1000000}')
+  # a chat session has no typed /clear: the daemon restarts it fresh
+  how="/clear"
+  [ "$(transport_of "$ME")" = stream ] && how="Clear in the Ultron app (or ultron term clear $ME)"
+  jq -n --arg r "Jarvis has been idle ${gap} min, so its prompt cache has expired: this message would write all $((ctx / 1000))k tokens of context again (about \$${usd} at API prices). Cheaper: $how, then \"resume\" — Jarvis reloads from handoffs/OPEN.md. To go ahead anyway, send your message again." \
+    '{decision: "block", reason: $r}'
+}
+
+# Statusline tap: Claude Code hands the statusline its rate-limit numbers. Save
+# them for `jarvis band`, then run the user's own statusline unchanged.
+cmd_statusline() {
+  local in cmd tmp
+  in=$(cat)
+  if have jq; then
+    mkdir -p "$STATE" 2>/dev/null
+    tmp="$STATE/usage.json.$$"
+    printf '%s' "$in" | jq -c --argjson ts "$(now)" 'select(.rate_limits.five_hour) | .rate_limits + {ts: $ts}' \
+      > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$STATE/usage.json"
+    rm -f "$tmp"
+    cmd="${JARVIS_STATUSLINE_CMD:-$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)}"
+  else
+    cmd="${JARVIS_STATUSLINE_CMD:-}"
+  fi
+  case "$cmd" in *"jarvis statusline"*) cmd="" ;; esac
+  if [ -n "$cmd" ]; then printf '%s' "$in" | sh -c "$cmd"
+  elif have jq; then printf '%s' "$in" | jq -r '"\(.model.display_name // "") · 5h \(.rate_limits.five_hour.used_percentage // "?" | tostring | .[0:4])%"'
+  fi
+}
+
+# ---------------------------------------------------------------- usage
+
+cmd_usage() {
+  local audit proj since_arg json merged
+  have python3 || die "python3 is needed for jarvis usage"
+  have jq || die "jq is needed for jarvis usage"
+  audit="$(cd "$(dirname "$0")" && pwd)/cc_usage_audit.py"
+  [ -f "$audit" ] || die "no $audit — re-run ultron-jarvis:setup"
+  proj=$(printf '%s' "$ROOT" | sed 's#[^A-Za-z0-9]#-#g')
+  set -- --project="$proj" \
+    --role worker='^You are a Jarvis worker' \
+    --role-tool orchestrator='ultron agent spawn|handoffs/bin/jarvis (start|status|spawn|merge)' \
+    --bash-category coordination='term (read|send|list|close)|chat (send|history)|handoffs/|OPEN\.md|jev\.sh|bin/jarvis' \
+    "$@"
+  json=$(python3 "$audit" "$@" --json) || exit 1
+  since_arg=$(printf '%s' "$json" | jq -r '.period[0]')
+  merged=$(git log --since="$since_arg" --diff-filter=A --name-only --format= -- "$H/merged/*.md" 2>/dev/null | grep -c '\.md$')
+  printf '%s' "$json" | jq -r --argjson merged "$merged" '
+    def usd: "$" + ((. * 100 | round) / 100 | tostring);
+    def role(r): [.by_role | to_entries[] | select(.key == r or .key == (r + " > subagents")) | .value.usd] | add // 0;
+    (role("orchestrator")) as $coord | (role("worker")) as $build
+    | "jarvis usage · \(.period[0][0:16]) → \(.period[1][0:16]) · \(.total_usd | usd) in this repo at API prices",
+      "  coordinating (Jarvis + its subagents): \($coord | usd)",
+      "  building (workers + their subagents):  \($build | usd)",
+      "  coordinating ÷ building: \(if $build > 0 then ($coord / $build * 100 | round) / 100 else "n/a" end)   (target ≤ 0.3)",
+      "  merged handoffs: \($merged) · cost per merged handoff: \(if $merged > 0 then (($coord + $build) / $merged) | usd else "n/a" end)",
+      "  worst 5-hour window: \(.peak_window_usd | usd) · most sessions in one 10-min slot: \(.peak_concurrent_sessions_10min)",
+      "  cache reloads after idle (Jarvis): \([.reloads[] | select(.role == "orchestrator" and .cause == "after idle")] | "\(map(.turns) | add // 0) turns, \(map(.usd) | add // 0 | usd)")",
+      "",
+      "  Jarvis by model (for comparing coordinator configs):",
+      ([.by_role_model[]? | select(.role == "orchestrator")] | sort_by(-.usd)[]
+        | "    \(.model): \(.turns) turns · \(.usd | usd) · $\((.usd / .turns * 1000 | round) / 1000)/turn · avg ctx \((.ctx / .turns / 1000) | round)k")'
+  # The daemon's own waste figures for the same period (ultron usage report).
+  have ultron || return 0
+  ultron --json usage report --project "$ROOT" --since "$since_arg" \
+      --until "$(printf '%s' "$json" | jq -r '.period[1]')" 2>/dev/null | jq -r '
+    def usd: "$" + ((. * 100 | round) / 100 | tostring);
+    def pct: (. * 100 | round | tostring) + "%";
+    .waste // empty
+    | "",
+      "  Waste (ultron usage report):",
+      "  " + ([(if .usd_per_merged_handoff then "\(.usd_per_merged_handoff | usd) of worker spend per merged handoff (\(.merged_handoffs) merged)" else "no handoffs merged in this period" end),
+               (if .worker_past_150k_share then "\(.worker_past_150k_share | pct) of worker spend past 150k context" else empty end),
+               (if .briefs_redone > 0 then "\(.briefs_redone) brief\(if .briefs_redone > 1 then "s" else "" end) redone" else empty end)] | join(" · ")),
+      "  workers \(.worker_usd | usd) · Jarvis/Vision \(.jarvis_usd | usd)",
+      (.top_briefs[] | "    \(.title): \(.usd | usd) · \(.turns) turns · peak \(.peak_context / 1000 | floor)k"
+        + (if (.past_150k_share // 0) > 0 then " · \(.past_150k_share | pct) past 150k" else "" end)
+        + (if .sessions > 1 then " · run \(.sessions) times" else "" end))' || true
+}
+
+# ---------------------------------------------------------------- main
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  start) cmd_start "$@" ;;
+  status) cmd_status ;;
+  band) cmd_band ;;
+  screen) [ -n "${1:-}" ] || die "usage: jarvis screen <session> [lines]"; need_ultron; screen "$1" "${2:-60}" ;;
+  spawn) cmd_spawn "$@" ;;
+  answer) cmd_answer "$@" ;;
+  merge) cmd_merge "$@" ;;
+  clean-worktrees) cmd_clean_worktrees ;;
+  events) cmd_events ;;
+  usage) cmd_usage "$@" ;;
+  statusline) cmd_statusline ;;
+  hook)
+    case "${1:-}" in
+      prompt) hook_prompt ;;
+      *) exit 0 ;;
+    esac ;;
+  *) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

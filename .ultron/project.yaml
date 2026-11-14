@@ -1,0 +1,8 @@
+{
+  "description": "a shared family step count tracker app",
+  "id": "p_hamro-steps",
+  "name": "Hamro Steps",
+  "permissions": "auto",
+  "stack": "Jarvis will help choose the stack",
+  "stage": "idea"
+}
