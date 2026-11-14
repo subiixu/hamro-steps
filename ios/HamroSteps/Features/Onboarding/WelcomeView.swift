@@ -67,7 +67,7 @@ struct WelcomeView: View {
     /// the one-line promise.
     private var hero: some View {
         VStack(spacing: 20) {
-            Icon.home
+            Icon.logo
                 .size(markIcon)
                 .foregroundStyle(.white)
                 .frame(width: markSide, height: markSide)

@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Every icon in the app. All are Hugeicons free set, stroke-rounded, 1.5
-/// stroke, stored as template SVGs in SharedAssets.xcassets/Icons, so they
+/// Every icon in the app. UI glyphs are Hugeicons free set, stroke-rounded, 1.5
+/// stroke; `logo` is the original Shared Stride brand mark.
+/// All are stored as template SVGs in SharedAssets.xcassets/Icons, so they
 /// take the surrounding foreground colour like `currentColor` on the web.
 ///
 /// Use `Icon.home` as a view (24pt by default, `.size(_:)` to change), or
 /// `Icon.home.image` where SwiftUI needs a bare `Image` (tab items, `Label`).
 enum Icon: String, CaseIterable, Sendable {
+    case logo = "icon-logo"                  // Shared Stride: the app brand
     case home = "icon-home"                  // footprints: the Home tab
     case family = "icon-family"              // user-group
     case profile = "icon-profile"            // user: the Me tab

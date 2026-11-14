@@ -31,3 +31,12 @@ Choose **01 — Homeward** for its familiar silhouette and combined home/path me
 - Phone views are schematic home-screen mockups with neutral placeholder app tiles, not actual iOS screenshots or a proposed app UI. They deliberately use no third-party app marks or UI glyphs.
 - Rebuild on macOS with `swift design/logo/build.swift`. The exporter uses system AppKit, CoreGraphics, Foundation, ImageIO and UniformTypeIdentifiers only; no dependency installation is needed. It does not read or modify the existing app icon assets.
 - See [verification.txt](verification.txt) for export and visual checks. Device installation, user testing, dark/tinted variants and production integration are outside this phase.
+
+## Selected logo — phase 2
+
+The user selected **02 — Shared Stride**. Rebuild its app and web assets with `swift design/logo/build.swift --app-assets`; this mode leaves all phase-one concept exports untouched.
+
+- AppIcon light: white on `#E2672F`; dark: `#F07A43` on `#2A1A12`; tinted: `#DDDDDD` on black. Each is a square 1024px sRGB PNG with no alpha channel.
+- Web: 64px favicon and 180px apple-touch-icon, using the light appearance.
+- Welcome: a white, background-free template SVG copied from the same path. Its square viewBox fits the mark to the existing icon frame without adding the app icon's outer padding again. Existing hero sizing and accent background stay unchanged.
+- The exporter copies the existing template/vector imageset settings. It does not modify the AppIcon manifest or the historical `design/app-icon/` files.

@@ -1,5 +1,6 @@
 #!/usr/bin/env swift
 // Run from the repository root: swift design/logo/build.swift
+// Export the selected production assets only: swift design/logo/build.swift --app-assets
 // Native macOS only; no installed packages. SVGs are the geometry source.
 import AppKit
 import Foundation
@@ -50,10 +51,10 @@ func path(_ data: String) -> CGPath {
     }
     return p
 }
-func bitmap(_ w: Int, _ h: Int, draw: (CGContext) -> Void) -> CGImage {
+func bitmap(_ w: Int, _ h: Int, opaque: Bool = false, draw: (CGContext) -> Void) -> CGImage {
     let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                        bitmapInfo: (opaque ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast).rawValue)!
     ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
@@ -92,6 +93,52 @@ func masked(_ image: CGImage, _ r: CGRect, _ ctx: CGContext) {
                       cornerHeight: r.height * 0.225, transform: nil))
     ctx.clip(); place(image, r, ctx); ctx.restoreGState()
 }
+// Keep the phase-one concept exports unchanged unless explicitly rebuilding them.
+if CommandLine.arguments.contains("--app-assets") {
+    let source = SVG()
+    let parser = XMLParser(contentsOf: root.appendingPathComponent("shared-stride.svg"))!
+    parser.delegate = source
+    precondition(parser.parse())
+    let marks = source.shapes.filter { $0.kind == "path" }
+    precondition(marks.count == 1, "Shared Stride must have one continuous path")
+    let geometry = marks[0].attrs["d"]!
+    let appIcon = "../../ios/HamroSteps/Resources/Assets.xcassets/AppIcon.appiconset/"
+    let outputs: [(String, Int, String, String)] = [
+        (appIcon + "AppIcon-1024.png", 1024, "#E2672F", "#FFFFFF"),
+        (appIcon + "AppIcon-1024-dark.png", 1024, "#2A1A12", "#F07A43"),
+        (appIcon + "AppIcon-1024-tinted.png", 1024, "#000000", "#DDDDDD"),
+        ("../../web/favicon.png", 64, "#E2672F", "#FFFFFF"),
+        ("../../web/apple-touch-icon.png", 180, "#E2672F", "#FFFFFF")
+    ]
+    for (filename, size, background, foreground) in outputs {
+        let large = bitmap(4096, 4096, opaque: true) { ctx in
+            ctx.scaleBy(x: 4, y: 4)
+            rect(ctx, CGRect(x: 0, y: 0, width: 1024, height: 1024), background)
+            ctx.setFillColor(color(foreground).cgColor)
+            ctx.addPath(path(geometry)); ctx.fillPath()
+        }
+        save(bitmap(size, size, opaque: true) {
+            place(large, CGRect(x: 0, y: 0, width: size, height: size), $0)
+        }, filename)
+    }
+    let assets = root.appendingPathComponent("../../ios/Shared/SharedAssets.xcassets/Icons")
+    let logo = assets.appendingPathComponent("icon-logo.imageset")
+    try FileManager.default.createDirectory(at: logo, withIntermediateDirectories: true)
+    // A square viewBox around the path avoids doubling the hero's existing padding.
+    let svg = """
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="158 138 708 708">
+      <path fill="#FFFFFF" d="\(geometry)"/>
+    </svg>
+
+    """
+    try svg.write(to: logo.appendingPathComponent("icon-logo.svg"), atomically: true, encoding: .utf8)
+    let manifest = try String(contentsOf: assets.appendingPathComponent("icon-home.imageset/Contents.json"), encoding: .utf8)
+    try manifest.replacingOccurrences(of: "icon-home.svg", with: "icon-logo.svg")
+        .write(to: logo.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+    print("icon-logo.imageset: white template SVG, original Shared Stride geometry")
+    exit(0)
+}
+
 var icons: [CGImage] = []
 var previews: [CGImage] = []
 var small: [CGImage] = []
