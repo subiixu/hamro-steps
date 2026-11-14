@@ -10,6 +10,7 @@ Jarvis session: s_8bc24026
 Usage band: amber (5h 72% used, 17:36)
 
 ## Questions for the user
+- manual test (privacy link): on a phone, tap "Privacy policy" on Welcome and on Me → Safari opens the privacy page; check the Me row looks right (not seen on screen yet).
 - manual test (web pages): open web/invite/index.html?code=K7M2QX and web/privacy/index.html in Safari; check dark mode; founders review the DRAFT privacy text + set real contact email and TestFlight URL.
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
@@ -23,6 +24,6 @@ Usage band: amber (5h 72% used, 17:36)
 ## To-do
 - ios-convex-activity RUNNING (s_e77dfb): ConvexActivityService + live swap + device-call cancellation contract (push review F1). After merge: manual test on a real iPhone (sign in with Apple, create family, push).
 - check-ios.sh: stale-lock break is check-then-rm (two waiters can both break it; push review F3). Make it atomic (mv the lock aside before rm). Tiny brief, after activity merges.
-- ios-store-fixes RUNNING (privacy link, encryption key, tinted icon alpha). Still to brief: push Home focus-event hook for eventId (PushRoute.family(id:eventId:)), after activity merges.
+- Still to brief: push Home focus-event hook for eventId (PushRoute.family(id:eventId:)), after activity merges.
 - Left for TestFlight: TESTFLIGHT_URL in web/invite/index.html once TestFlight exists.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.
