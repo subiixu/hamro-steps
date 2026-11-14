@@ -77,8 +77,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 
-/// The services the app runs on. This phase always uses the in-memory mocks;
-/// the Convex phase swaps `family`, `auth` and `activity` here and nowhere else.
+/// The services the app runs on: Convex, or the in-memory mocks for a Debug
+/// mock launch (see `AppLaunch.services()`).
 struct AppServices {
     let family: any FamilyService
     let auth: any AuthService
@@ -103,6 +103,8 @@ extension EnvironmentValues {
 ///   -screen <name>        open one screen directly: welcome, name, health,
 ///                         setup, create-name, create-goal, invite, join,
 ///                         home, settings, me
+/// `-signedOut`, `-newUser` and `-screen` run on the in-memory mocks; without
+/// them the app runs on Convex.
 enum AppLaunch {
     enum Screen: String {
         case welcome, name, health, setup
@@ -111,7 +113,34 @@ enum AppLaunch {
         case invite, join, home, settings, me
     }
 
+    /// Convex (auth, family and activity) unless this is a Debug mock launch
+    /// (`-signedOut`, `-newUser` or `-screen`) or the Convex URLs are missing,
+    /// which falls back to the mocks.
     static func services() -> AppServices {
+        if !isMockLaunch, let config = ConvexConfig() {
+            let convex = ConvexServices.live(config: config)
+            return AppServices(
+                family: convex.family,
+                auth: convex.auth,
+                steps: stepSource(),
+                activity: convex.activity,
+                now: { .now }
+            )
+        }
+        return mockServices()
+    }
+
+    /// A Debug launch with an argument that only makes sense against the mocks.
+    static var isMockLaunch: Bool {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        return args.contains("-signedOut") || args.contains("-newUser") || screen != nil
+        #else
+        return false
+        #endif
+    }
+
+    static func mockServices() -> AppServices {
         let defaults = UserDefaults.standard
         var signedIn = defaults.bool(forKey: MockAuthService.signedInKey)
         var newUser = false
@@ -157,9 +186,8 @@ enum AppLaunch {
     }
 }
 
-/// Temporary, until the mock activity service knows the mock families: the
-/// mock only answers for its own sample family, so every family's feed reads
-/// from that one. Goes when Convex lands.
+/// For the mock launches only: the mock activity service answers for its own
+/// sample family, so every mock family's feed reads from that one.
 struct SampleFamilyActivity: ActivityService {
     let base: MockActivityService
     init(_ base: MockActivityService) { self.base = base }
