@@ -18,7 +18,13 @@ stale_lock() {
 got=0
 for _ in $(seq 1 1200); do
   if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; got=1; break; fi
-  if stale_lock; then echo "check-ios: removing stale lock $LOCK"; rm -rf "$LOCK"; continue; fi
+  if stale_lock; then
+    echo "check-ios: removing stale lock $LOCK"
+    if mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then
+      rm -rf "$LOCK.stale.$$"
+      continue
+    fi
+  fi
   sleep 1
 done
 [ "$got" = 1 ] || { echo "check-ios: another check held $LOCK for 20 min"; exit 1; }

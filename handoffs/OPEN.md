@@ -22,6 +22,5 @@ Usage band: green (the 5-hour window has reset since the last reading (23 min ag
 ## Waiting on Jarvis
 
 ## To-do
-- check-ios.sh: stale-lock break is check-then-rm (two waiters can both break it; push review F3). Make it atomic (mv the lock aside before rm). Tiny brief, after activity merges.
 - Left for TestFlight: TESTFLIGHT_URL in web/invite/index.html once TestFlight exists.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.
