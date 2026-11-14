@@ -45,14 +45,20 @@ enum InviteCode {
 
 /// The invite message people forward on WhatsApp or Messenger.
 enum InviteMessage {
-    /// Placeholder until the real TestFlight link exists. Change it here only.
-    static let installURL = URL(string: "https://testflight.apple.com/join/XXXX")!
+    /// The hosted invite page (web/invite): shows the code and the TestFlight install link.
+    static let invitePage = URL(string: "https://subiixu.github.io/hamro-steps/invite/")!
+
+    static func installURL(code: String) -> URL {
+        var parts = URLComponents(url: invitePage, resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "code", value: InviteCode.normalise(code))]
+        return parts.url!
+    }
 
     static func text(familyName: String, code: String) -> String {
         """
         Join \(familyName) on Hamro Steps, so we can walk together every day.
 
-        1. Install the app: \(installURL.absoluteString)
+        1. Install the app: \(installURL(code: code).absoluteString)
         2. Open it, sign in, and enter our family code: \(InviteCode.normalise(code))
         """
     }

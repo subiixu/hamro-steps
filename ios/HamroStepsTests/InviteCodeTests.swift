@@ -22,7 +22,7 @@ struct InviteCodeTests {
 
     @Test func extractsTheCodeFromTheWholeInviteMessage() {
         let message = InviteMessage.text(familyName: "Thapa Family", code: "K7M2QX")
-        #expect(message.contains("https://testflight.apple.com/join/XXXX"))
+        #expect(message.contains("https://subiixu.github.io/hamro-steps/invite/?code=K7M2QX"))
         #expect(InviteCode.extract(from: message) == "K7M2QX")
         #expect(InviteCode.extract(from: "k7m-2qx") == "K7M2QX")
         #expect(InviteCode.extract(from: "walk with us tonight please") == nil)
