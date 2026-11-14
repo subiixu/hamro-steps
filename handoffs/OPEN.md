@@ -6,8 +6,8 @@ rebuild "what's pending" by searching the handoff folders. Before Jarvis
 stops, this file must hold everything a fresh session needs: the user may
 clear Jarvis after a long idle.
 
-Jarvis session: s_b8945006
-Usage band: red (5h 81% used, 18:12)
+Jarvis session: s_70936213
+Usage band: green (the 5-hour window has reset since the last reading (23 min ago), 18:36)
 
 ## Questions for the user
 - manual test (live app on iPhone): build to your phone from Xcode (Debug, no launch flags) → Sign in with Apple → name → create a family → invite code shows; sync steps; start a walk (push should reach a second account's phone); react to a feed event; Me → sign out. First run ever against the real dev backend.
@@ -22,7 +22,6 @@ Usage band: red (5h 81% used, 18:12)
 ## Waiting on Jarvis
 
 ## To-do
-- Account pin: Hamro Steps is not pinned to claude-3 (momo@) yet; the user must run `ultron account use claude-3 --project p_hamro-steps`. Cleanup ran on subaz@ by the user's choice.
 - check-ios.sh: stale-lock break is check-then-rm (two waiters can both break it; push review F3). Make it atomic (mv the lock aside before rm). Tiny brief, after activity merges.
 - Left for TestFlight: TESTFLIGHT_URL in web/invite/index.html once TestFlight exists.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.
