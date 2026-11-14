@@ -1,0 +1,17 @@
+Logo export verification — 2026-11-15
+Command: swift design/logo/build.swift — passed
+PNG decoding, dimensions and alpha coverage:
+PASS compare.png: 3408x2930, fully opaque
+PASS homeward-1024.png: 1024x1024, fully opaque
+PASS homeward-180.png: 180x180, fully opaque
+PASS homeward-home-screen.png: 1170x2532, transparent outside rounded phone frame
+PASS open-embrace-1024.png: 1024x1024, fully opaque
+PASS open-embrace-180.png: 180x180, fully opaque
+PASS open-embrace-home-screen.png: 1170x2532, transparent outside rounded phone frame
+PASS shared-stride-1024.png: 1024x1024, fully opaque
+PASS shared-stride-180.png: 180x180, fully opaque
+PASS shared-stride-home-screen.png: 1170x2532, transparent outside rounded phone frame
+Visual check: opened compare.png; all three silhouettes remain distinguishable in the 60x60 row and phone mockups.
+Homeward: roof and white path remain visible. Shared Stride: both rises remain distinct. Open Embrace: heart and open centre remain visible; narrow bottom gap is least robust.
+Phone views are schematic; rounded rectangles approximate the system mask.
+Not checked: device installation, target-user recognition testing, production integration, dark/tinted exports.

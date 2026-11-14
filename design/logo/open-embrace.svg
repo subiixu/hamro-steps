@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Hamro Steps — Open Embrace</title>
+  <desc>A single orange embrace with heart-shaped shoulders and a welcoming open centre. Original concept 03, light appearance.</desc>
+  <rect x="0" y="0" width="1024" height="1024" fill="#FFFFFF"/>
+  <path fill="#E2672F" d="M 512 318 C 453 204 327 189 240 256 C 145 329 152 473 207 574 C 263 678 368 758 471 812 C 489 822 504 808 493 788 C 434 682 366 583 366 490 C 366 401 419 359 470 398 C 486 410 499 428 512 448 C 525 428 538 410 554 398 C 605 359 658 401 658 490 C 658 583 590 682 531 788 C 520 808 535 822 553 812 C 656 758 761 678 817 574 C 872 473 879 329 784 256 C 697 189 571 204 512 318 Z"/>
+</svg>

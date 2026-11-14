@@ -22,6 +22,7 @@ Usage band: green (the 5-hour window has reset since the last reading (307 min a
 <!-- `jarvis merge` removes the line -->
 
 ## Waiting on Jarvis
+- (T-38) New logo: Codex phase 1 (3 concepts in design/logo/) running. When it lands: show the user design/logo/compare.png, ask which; then a phase 2 brief exports it into AppIcon.appiconset (light/dark/tinted) + web favicon, and a new TestFlight build.
 
 ## To-do
 - `handoffs/bin/jarvis send`/`read <id>` print the usage text instead of acting (seen 2026-11-14); use `ultron term send/read` meanwhile.

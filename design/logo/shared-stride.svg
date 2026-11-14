@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Hamro Steps — Shared Stride</title>
+  <desc>One broad white ribbon rises through two rounded steps on orange. Original concept 02, light appearance.</desc>
+  <rect x="0" y="0" width="1024" height="1024" fill="#E2672F"/>
+  <path fill="#FFFFFF" d="M 218 768 C 180 768 158 741 158 708 C 158 675 180 648 218 648 L 326 648 L 326 493 C 326 457 351 432 387 432 L 526 432 L 526 277 C 526 241 551 216 587 216 L 806 216 C 844 216 866 243 866 276 C 866 309 844 336 806 336 L 646 336 L 646 491 C 646 527 621 552 585 552 L 446 552 L 446 707 C 446 743 421 768 385 768 Z"/>
+</svg>

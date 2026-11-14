@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Hamro Steps — Homeward</title>
+  <desc>A warm orange home with an open, winding path. Original concept 01, light appearance.</desc>
+  <rect x="0" y="0" width="1024" height="1024" fill="#FFFFFF"/>
+  <path fill="#E2672F" d="M 180 443 C 180 420 191 400 210 385 L 465 191 C 493 170 531 170 559 191 L 814 385 C 833 400 844 420 844 443 L 844 754 C 844 795 811 828 770 828 L 254 828 C 213 828 180 795 180 754 Z"/>
+  <path fill="#FFFFFF" d="M 389 828 C 389 709 430 662 502 613 C 563 572 569 526 542 473 C 533 455 543 435 562 433 C 592 430 622 456 634 492 C 669 589 619 658 574 703 C 534 743 531 777 531 828 Z"/>
+</svg>
