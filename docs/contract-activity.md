@@ -38,4 +38,7 @@ A walk belongs to a user and shows in every family they're in.
 - `notificationPrefs()` → `{walkStarted, goalHit, reactions, eveningNudge}`, all booleans. Defaults: true, true, true, false.
 - `setNotificationPrefs(partial)`.
 - Evening nudge: a cron at 19:00 Nepal time. For each family under its goal, it pushes members who opted in, with supportive wording ("Your family is at 62% today. A short evening walk would help everyone get there.").
-- Push payload: `aps.alert {title, body}`, `aps.sound "default"`, plus `{type, familyId, eventId?}` so the app can route a tap.
+- Push payload: `aps.alert {title, body}`, `aps.sound "default"`, plus `{type, familyId, eventId?}` so the app can route a tap. `type` ∈ `walk_started | family_100 | reaction | evening_nudge`.
+- `registerDevice` error: `invalid_device_token`. The app calls `unregisterDevice` before sign-out; debug builds register with `sandbox`.
+- The evening nudge goes at most once per person per evening. A person in several under-goal families gets one nudge, about the family furthest from its goal.
+- Push keys: APNs uses `APNS_KEY_ID`/`APNS_PRIVATE_KEY` (a team-wide APNs key); Sign in with Apple uses `APPLE_KEY_ID`/`APPLE_PRIVATE_KEY`. `APPLE_TEAM_ID` is shared.
