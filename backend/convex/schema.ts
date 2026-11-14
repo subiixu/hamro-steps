@@ -2,8 +2,8 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * Phase 1 tables. Phase 2 (walks, statuses, feed events, reactions, devices,
- * notification mutes) adds its own tables; anything per-user or per-member
+ * Phase 1 tables, then phase 2 (walks, statuses, feed events, reactions,
+ * devices, notification prefs). Anything per-user or per-member
  * must also be cleaned up in `lib/cleanup.ts` (account deletion, leaving).
  */
 export default defineSchema({
@@ -155,9 +155,11 @@ export default defineSchema({
   }).index("by_user", ["userId"]),
 
   /**
-   * Family feed (contract F13). At most one row per (family, day, type, actor),
-   * enforced by checking `by_family_day_type_actor` before inserting.
+   * Family feed (contract F13). member_* / family_* have at most one row per
+   * (family, day, type, actor), enforced by checking `by_family_day_type_actor`
+   * before inserting; walk_started has one row per walk per family.
    * `actorId` is unset for family_50 / family_100. Purged after 7 days.
+   * `lastReactionPushAt` coalesces reaction pushes to the actor (1 per 10 min).
    */
   feedEvents: defineTable({
     familyId: v.id("families"),
@@ -172,6 +174,7 @@ export default defineSchema({
     day: v.string(),
     createdAt: v.number(),
     data: v.object({ walkId: v.optional(v.id("walks")) }),
+    lastReactionPushAt: v.optional(v.number()),
   })
     .index("by_family_day_type_actor", ["familyId", "day", "type", "actorId"])
     .index("by_family_created", ["familyId", "createdAt"])
@@ -187,4 +190,31 @@ export default defineSchema({
     .index("by_event", ["eventId"])
     .index("by_event_user", ["eventId", "userId"])
     .index("by_user", ["userId"]),
+
+  /**
+   * APNs device tokens (contract F15). One row per token; registering a token
+   * another user had moves it to the caller. `environment` picks the APNs host.
+   */
+  devices: defineTable({
+    apnsToken: v.string(),
+    userId: v.id("users"),
+    environment: v.union(v.literal("sandbox"), v.literal("production")),
+    updatedAt: v.number(),
+  })
+    .index("by_token", ["apnsToken"])
+    .index("by_user", ["userId"])
+    .index("by_user_updated", ["userId", "updatedAt"]),
+
+  /** Notification preferences (contract F15). No row means the defaults. */
+  notificationPrefs: defineTable({
+    userId: v.id("users"),
+    walkStarted: v.boolean(),
+    goalHit: v.boolean(),
+    reactions: v.boolean(),
+    eveningNudge: v.boolean(),
+    /** Nepal day of the last evening nudge sent, so it goes once per day. */
+    lastNudgeDay: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_evening_nudge", ["eveningNudge"]),
 });

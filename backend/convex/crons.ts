@@ -13,4 +13,7 @@ crons.daily("purge expired refresh tokens", { hourUTC: 19, minuteUTC: 0 }, inter
 crons.hourly("recover Apple revokes", { minuteUTC: 30 }, internal.users.recoverAppleRevocations, {});
 crons.daily("purge old feed events", { hourUTC: 19, minuteUTC: 30 }, internal.feed.purgeOld, {});
 
+// Evening nudge at 19:00 Nepal (UTC+5:45) = 13:15 UTC.
+crons.cron("evening nudge", "15 13 * * *", internal.notifications.eveningNudge, {});
+
 export default crons;

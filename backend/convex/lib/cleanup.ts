@@ -3,6 +3,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { familyMembers } from "./access";
 import { recomputeSnapshot } from "./totals";
 import { deleteFamilyFeed, deleteMemberFeed, deleteUserFeed } from "./feed";
+import { deleteUserPush } from "./push";
 
 /**
  * Removes one membership and everything that member shared in that family:
@@ -65,7 +66,7 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
  * refresh token, if one was stored, so the caller can revoke it.
  * Also their walks (a pending autoStop then finds nothing) and status.
  * Also every feed event they posted and every reaction they made.
- * Phase 2c: also delete their devices and mutes.
+ * Also their push devices and notification prefs.
  */
 export async function deleteUserData(
   ctx: MutationCtx,
@@ -87,6 +88,7 @@ export async function deleteUserData(
   }
 
   await deleteUserFeed(ctx, userId);
+  await deleteUserPush(ctx, userId);
 
   for await (const row of ctx.db
     .query("dailySteps")

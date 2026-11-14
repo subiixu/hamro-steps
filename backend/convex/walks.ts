@@ -7,6 +7,7 @@ import { MAX_WALKS_PER_DAY, WALK_DURATION_MS } from "./lib/constants";
 import { fail } from "./lib/errors";
 import { nepalDay } from "./lib/nepalDay";
 import { postEvent } from "./lib/feed";
+import { pushWalkStarted } from "./lib/push";
 
 /**
  * Starts a 2-hour walk (contract F9). At most one open walk per user and 3
@@ -44,14 +45,15 @@ export const startWalk = mutation({
     });
     await ctx.scheduler.runAt(endsAt, internal.walks.autoStop, { walkId });
 
-    // A `walk_started` event in each of their families. Like every feed type
-    // it's at most once per (family, actor, day), so only the day's first walk posts.
+    // A `walk_started` event in each of their families, one per walk (contract F13),
+    // and a push to everyone else in them (F9).
     const memberships = await ctx.db
       .query("memberships")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .collect();
+    const events = [];
     for (const m of memberships) {
-      await postEvent(ctx, {
+      const eventId = await postEvent(ctx, {
         familyId: m.familyId,
         type: "walk_started",
         actorId: user._id,
@@ -59,8 +61,9 @@ export const startWalk = mutation({
         now,
         data: { walkId },
       });
+      events.push({ familyId: m.familyId, eventId });
     }
-    // 2c: push — to every other member who hasn't muted walks (contract F9).
+    await pushWalkStarted(ctx, user, events);
 
     return { walkId, startedAt: now, endsAt };
   },

@@ -75,3 +75,25 @@ export const MEMBER_STEP_MILESTONES = [
 /** Reactions (contract F14), in the fixed order `feed` reports them. */
 export const REACTION_EMOJI = ["👏", "❤️", "🙌", "🔥", "😄"] as const;
 export type ReactionEmoji = (typeof REACTION_EMOJI)[number];
+
+/** Notification prefs (contract F15) when the user has never set them. */
+export const DEFAULT_NOTIFICATION_PREFS = {
+  walkStarted: true,
+  goalHit: true,
+  reactions: true,
+  eveningNudge: false,
+} as const;
+/** At most one reaction push per feed event in this window. */
+export const REACTION_PUSH_COALESCE_MS = 10 * 60 * 1000;
+/** APNs provider JWTs are reused this long (Apple allows 20–60 min). */
+export const APNS_JWT_TTL_MS = 50 * 60 * 1000;
+export const APNS_HOSTS = {
+  production: "api.push.apple.com",
+  sandbox: "api.sandbox.push.apple.com",
+} as const;
+
+/**
+ * Registered phones kept per user. Registering one more retires the device
+ * that registered least recently, so delivery can always reach every device.
+ */
+export const MAX_DEVICES_PER_USER = 10;

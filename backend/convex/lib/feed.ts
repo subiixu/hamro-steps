@@ -1,14 +1,16 @@
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { MEMBER_STEP_MILESTONES } from "./constants";
+import { pushGoalHit } from "./push";
 import { liveTotal } from "./totals";
 
 export type FeedEventType = Doc<"feedEvents">["type"];
 
 /**
- * Inserts a feed event unless one already exists for (family, day, type,
- * actor) — every type is created at most once per that key (contract F13).
- * Returns the new event's id, or null when it already existed.
+ * Inserts a feed event. `member_*` and `family_*` are created at most once per
+ * (family, day, type, actor); `walk_started` is created once per walk, so it
+ * always inserts (contract F13). Returns the new event's id, or null when an
+ * event with that key already existed.
  */
 export async function postEvent(
   ctx: MutationCtx,
@@ -21,13 +23,15 @@ export async function postEvent(
     data?: Doc<"feedEvents">["data"];
   },
 ): Promise<Id<"feedEvents"> | null> {
-  const existing = await ctx.db
-    .query("feedEvents")
-    .withIndex("by_family_day_type_actor", (q) =>
-      q.eq("familyId", e.familyId).eq("day", e.day).eq("type", e.type).eq("actorId", e.actorId),
-    )
-    .first();
-  if (existing) return null;
+  if (e.type !== "walk_started") {
+    const existing = await ctx.db
+      .query("feedEvents")
+      .withIndex("by_family_day_type_actor", (q) =>
+        q.eq("familyId", e.familyId).eq("day", e.day).eq("type", e.type).eq("actorId", e.actorId),
+      )
+      .first();
+    if (existing) return null;
+  }
   return await ctx.db.insert("feedEvents", {
     familyId: e.familyId,
     type: e.type,
@@ -79,9 +83,7 @@ export async function postTodayStepEvents(
         day: today,
         now,
       });
-      if (id) {
-        // 2c: push — "goal hit" to members who haven't muted it (contract F13).
-      }
+      if (id) await pushGoalHit(ctx, family, id);
     }
   }
 }

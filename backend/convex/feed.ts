@@ -12,6 +12,7 @@ import {
 } from "./lib/constants";
 import { fail } from "./lib/errors";
 import { deleteEvent } from "./lib/feed";
+import { pushReaction } from "./lib/push";
 import { addDays, nepalDay } from "./lib/nepalDay";
 
 /** The oldest Nepal day `feed` shows at `now`: today and the 2 days before. */
@@ -113,9 +114,7 @@ export const react = mutation({
     if (existing) await ctx.db.patch(existing._id, { emoji });
     else await ctx.db.insert("reactions", { eventId: event._id, userId: user._id, emoji });
 
-    if (event.actorId && event.actorId !== user._id) {
-      // 2c: push — "X reacted 👏 to …" to the actor unless they muted reactions (contract F14).
-    }
+    await pushReaction(ctx, event, user, emoji, Date.now());
     return { myReaction: emoji };
   },
 });

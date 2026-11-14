@@ -100,7 +100,7 @@ describe("step events", () => {
 });
 
 describe("walk_started", () => {
-  test("one per family with data.walkId; at most once per day", async () => {
+  test("one per walk per family with data.walkId: 3 walks give 3 events each", async () => {
     const a = await makeUser(t);
     const b = await makeUser(t);
     const f1 = await familyOf(50_000, a, b);
@@ -111,9 +111,16 @@ describe("walk_started", () => {
       expect(feed).toHaveLength(1);
       expect(feed[0]).toMatchObject({ type: "walk_started", data: { walkId: w.walkId }, day: TODAY });
     }
-    await a.as.mutation(api.walks.stopWalk, {});
-    await a.as.mutation(api.walks.startWalk, {});
-    expect(await allEvents()).toHaveLength(2);
+    const walkIds = [w.walkId];
+    for (let i = 0; i < 2; i++) {
+      await a.as.mutation(api.walks.stopWalk, {});
+      walkIds.push((await a.as.mutation(api.walks.startWalk, {})).walkId);
+    }
+    for (const f of [f1, f2]) {
+      const feed = await feedOf(a, f);
+      expect(feed.map((e) => e.data.walkId).sort()).toEqual([...walkIds].sort());
+    }
+    expect(await allEvents()).toHaveLength(6);
   });
 });
 
