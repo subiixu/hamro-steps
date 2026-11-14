@@ -15,6 +15,7 @@ budget: <optional: this worker's own limits, any of `45m · $10 · 120k` (minute
 
 ## Context
 <decisions already made, files to read first, the previous phase's handoff in handoffs/merged/>
+Read narrowly: open the brief, docs/PRD.md and merged handoffs with grep -n and line ranges (sed -n), never whole-file cat.
 
 ## Scope
 - May touch: <paths>
