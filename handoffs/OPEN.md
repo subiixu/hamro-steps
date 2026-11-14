@@ -23,10 +23,10 @@ Usage band: <green | amber | red> — `handoffs/bin/jarvis status` writes it fro
 
 ## To-do
 - PRD = docs/PRD.md (backend Convex, invites code-first for pilot). Tasks T-4…T-10. Supabase work dropped (archived ~/.jarvis-archive/hamro-steps/).
-- Backend 2a–2c all merged (2c = 2a8e145). Combined review over a7a60e7..2a8e145 running (diff-reviewer subagent); act on findings. Then brief ConvexActivityService + push registration (iOS) after ios-convex-client merges.
+- Backend 2a–2c merged; combined review clean (no blocking). Follow-up walk-purge + NUDGE_BATCH=25 RUNNING (s_12142e). Next iOS brief (ConvexActivityService + push registration) MUST call unregisterDevice before sign-out AND on account switch (review item: pushes reach handed-over phones otherwise). Goal-hit push includes the tipping member: per spec, left as is.
 - iOS phase 3 Convex client sent back (isolated, s_19a93b). After merge: apply its AppLaunch.services() swap + CONVEX_URL/SITE_URL (harmless-dolphin-642, see above).
 - iOS: after backend 2c → ConvexActivityService + push registration/routing (APNs device token → registerDevice; tap routes by payload type).
 - Host web/ (invite + privacy) somewhere — user picks host; TestFlight URL + privacy email placeholders to fill.
 - App icon (codex) → Jarvis installs design/app-icon into ios AppIcon.appiconset after merge.
 - User setup before device testing: (team id ✓ JQ2D4NNS3B) App ID com.bixustudio.hamrosteps with SIWA + HealthKit (automatic signing should create it on first device build), Convex project (user creates/logs in), APNs key, privacy policy URL before TestFlight.
-- ios-convex-client sent back (s_19a93b, isolated): second opinion Blocking on token refresh via SDK, sign-out/refresh race, Keychain write retry. Then merge, apply AppLaunch.services() swap (handoff Notes), set CONVEX_URL=https://harmless-dolphin-642.ap-southeast-2.convex.cloud and CONVEX_SITE_URL=https://harmless-dolphin-642.ap-southeast-2.convex.site in project.yml (dev deployment; no env vars set yet as of 15:20), run check-ios on main.
+- ios-convex-client sent back (s_19a93b, isolated): second opinion Blocking on token refresh via SDK, sign-out/refresh race, Keychain write retry. Then merge, apply AppLaunch.services() swap (handoff Notes), set CONVEX_URL=https://harmless-dolphin-642.ap-southeast-2.convex.cloud and CONVEX_SITE_URL=https://harmless-dolphin-642.ap-southeast-2.convex.site in project.yml (dev deployment; all 6 env vars set, JWKS verified 15:40), run check-ios on main.

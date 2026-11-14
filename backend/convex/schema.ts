@@ -139,7 +139,8 @@ export default defineSchema({
     nepalDay: v.string(),
   })
     .index("by_user_open", ["userId", "endedAt"])
-    .index("by_user_day", ["userId", "nepalDay"]),
+    .index("by_user_day", ["userId", "nepalDay"])
+    .index("by_day", ["nepalDay"]),
 
   /**
    * Status (contract F12): at most one row per user. Exactly one of `preset`

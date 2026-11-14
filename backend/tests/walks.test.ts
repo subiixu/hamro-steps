@@ -175,3 +175,42 @@ describe("familyToday walking", () => {
     expect(await memberView(a, fam, walker.id)).toMatchObject({ walkingSince: null, walkEndsAt: null });
   });
 });
+
+describe("purgeOld", () => {
+  const insertWalk = (userId: Id<"users">, nepalDay: string, ended: boolean, i = 0) =>
+    t.run((ctx) =>
+      ctx.db.insert("walks", {
+        userId,
+        startedAt: i,
+        endsAt: i + WALK_DURATION_MS,
+        endedAt: ended ? i + 1 : undefined,
+        nepalDay,
+      }),
+    );
+
+  test("purges old ended walks, keeps recent and unended ones", async () => {
+    const a = await makeUser(t);
+    // Today is 2026-11-14; cutoff day is 2026-11-07 (older than that goes).
+    const old = await insertWalk(a.id, "2026-11-06", true);
+    const edge = await insertWalk(a.id, "2026-11-07", true);
+    const recent = await insertWalk(a.id, "2026-11-13", true);
+    const oldOpen = await insertWalk(a.id, "2026-11-01", false);
+    expect(await t.mutation(internal.walks.purgeOld, {})).toEqual({ deleted: 1 });
+    const ids = (await walksOf(a.id)).map((w) => w._id);
+    expect(ids).not.toContain(old);
+    expect(ids).toEqual(expect.arrayContaining([edge, recent, oldOpen]));
+    expect(ids).toHaveLength(3);
+  });
+
+  test("works through more than one batch", async () => {
+    const a = await makeUser(t);
+    for (let i = 0; i < 450; i++) await insertWalk(a.id, "2026-11-01", true, i);
+    const keep = await insertWalk(a.id, "2026-11-01", false);
+    await insertWalk(a.id, "2026-11-13", true);
+    await t.mutation(internal.walks.purgeOld, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await walksOf(a.id);
+    expect(left).toHaveLength(2);
+    expect(left.map((w) => w._id)).toContain(keep);
+  });
+});

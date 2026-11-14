@@ -3,9 +3,9 @@ import { internalMutation, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireUser } from "./lib/access";
 import { openWalk } from "./lib/activity";
-import { MAX_WALKS_PER_DAY, WALK_DURATION_MS } from "./lib/constants";
+import { MAX_WALKS_PER_DAY, WALK_DURATION_MS, WALK_RETENTION_DAYS } from "./lib/constants";
 import { fail } from "./lib/errors";
-import { nepalDay } from "./lib/nepalDay";
+import { addDays, nepalDay } from "./lib/nepalDay";
 import { postEvent } from "./lib/feed";
 import { pushWalkStarted } from "./lib/push";
 
@@ -92,5 +92,33 @@ export const autoStop = internalMutation({
     if (!walk || walk.endedAt !== undefined) return null;
     await ctx.db.patch(walk._id, { endedAt: Math.min(walk.endsAt, Date.now()) });
     return null;
+  },
+});
+
+const PURGE_BATCH = 200;
+
+/**
+ * Daily: deletes ended walks whose Nepal day is more than WALK_RETENTION_DAYS
+ * old. Never deletes an unended walk. Pages through the old rows and
+ * reschedules itself with the cursor while more remain.
+ */
+export const purgeOld = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const cutoffDay = addDays(nepalDay(Date.now()), -WALK_RETENTION_DAYS);
+    const page = await ctx.db
+      .query("walks")
+      .withIndex("by_day", (q) => q.lt("nepalDay", cutoffDay))
+      .paginate({ numItems: PURGE_BATCH, cursor: args.cursor ?? null });
+    let deleted = 0;
+    for (const w of page.page) {
+      if (w.endedAt === undefined) continue;
+      await ctx.db.delete(w._id);
+      deleted++;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.walks.purgeOld, { cursor: page.continueCursor });
+    }
+    return { deleted };
   },
 });

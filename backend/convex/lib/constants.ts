@@ -67,6 +67,8 @@ export const FEED_WINDOW_DAYS = 3;
 export const FEED_MAX_EVENTS = 100;
 /** Feed events older than this are purged daily. */
 export const FEED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Ended walks whose Nepal day is older than this many days are purged daily. */
+export const WALK_RETENTION_DAYS = 7;
 export const MEMBER_STEP_MILESTONES = [
   { steps: 5_000, type: "member_5k" },
   { steps: 10_000, type: "member_10k" },

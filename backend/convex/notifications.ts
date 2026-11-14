@@ -103,7 +103,7 @@ export const setNotificationPrefs = mutation({
   },
 });
 
-const NUDGE_BATCH = 100;
+const NUDGE_BATCH = 25;
 
 /**
  * Daily at 19:00 Nepal (contract F16). Each person who opted in, and has a

@@ -382,8 +382,8 @@ describe("evening nudge", () => {
     for (const u of people) await setPrefs(u, { eveningNudge: true });
     const nudges = async () => (await queuedPushes()).filter((p) => p.data.type === "evening_nudge");
 
-    expect(await nudge()).toEqual({ nudged: 100 });
-    await runDueJobs(); // the second page
+    expect(await nudge()).toEqual({ nudged: 25 });
+    await runDueJobs(); // the remaining pages
     const first = await nudges();
     expect(recipients(first)).toEqual(ids(...people));
     // Odd people are only in A; even people are nudged about B (0% both, B has more left).
@@ -396,7 +396,7 @@ describe("evening nudge", () => {
 
     // The next evening they're nudged again.
     vi.setSystemTime(new Date("2026-11-15T13:15:00Z"));
-    expect(await nudge()).toEqual({ nudged: 100 });
+    expect(await nudge()).toEqual({ nudged: 25 });
   });
 });
 
