@@ -64,10 +64,28 @@ struct WalkingBadge: View {
     }
 }
 
+/// The small orange circle with the walker icon that sits on the corner of
+/// a member's avatar while they're out walking. Decorative: the row says
+/// "Walking now" in words too.
+struct WalkingDot: View {
+    @ScaledMetric(relativeTo: .footnote) private var side: CGFloat = 20
+
+    var body: some View {
+        let size = min(side, 30)
+        Icon.walking.size(size * 0.62)
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(.accent, in: .circle)
+            .overlay(Circle().strokeBorder(.surface, lineWidth: 2))
+            .accessibilityHidden(true)
+    }
+}
+
 #Preview {
     VStack(spacing: 20) {
         WalkingBadge()
         WalkingBadge(label: "You're walking")
+        WalkingDot()
     }
     .padding()
 }

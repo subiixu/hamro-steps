@@ -10,6 +10,7 @@ struct HomeView: View {
     @Environment(\.activityService) private var activity
     @Environment(\.now) private var now
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     @State private var walk: WalkController?
     @State private var feed: FeedModel?
@@ -33,15 +34,16 @@ struct HomeView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: Bento.gap) {
                         header
                         content
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, Bento.margin)
                     .padding(.bottom, 24)
                 }
                 // Room below the last card so the floating tab bar never sits on it.
                 .contentMargins(.bottom, 72, for: .scrollContent)
+                .defaultScrollAnchor(AppLaunch.homeScrollAnchor)
                 .background(.canvas)
                 .refreshable {
                     await stepSync.sync()
@@ -97,55 +99,52 @@ struct HomeView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            if home.showsSwitcher {
-                Menu {
-                    ForEach(home.families) { family in
-                        Button {
-                            Task { await home.select(family.id) }
-                        } label: {
-                            if family.id == home.selectedFamilyId {
-                                Label { Text(family.name) } icon: { Icon.tick.image }
-                            } else {
-                                Text(family.name)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                if home.showsSwitcher {
+                    Menu {
+                        ForEach(home.families) { family in
+                            Button {
+                                Task { await home.select(family.id) }
+                            } label: {
+                                if family.id == home.selectedFamilyId {
+                                    Label { Text(family.name) } icon: { Icon.tick.image }
+                                } else {
+                                    Text(family.name)
+                                }
                             }
                         }
-                    }
-                    Divider()
-                    Button { showAddFamily = true } label: {
-                        Label { Text("Add another family") } icon: { Icon.plus.image }
-                    }
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        familyTitle
-                        Icon.chevronDown.size(22).foregroundStyle(.secondaryText)
-                            .padding(.top, chevronTop)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("\(home.selectedFamily?.name ?? ""), switch family"))
-            } else {
-                familyTitle
-                    .contextMenu {
+                        Divider()
                         Button { showAddFamily = true } label: {
                             Label { Text("Add another family") } icon: { Icon.plus.image }
                         }
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            familyTitle
+                            Icon.chevronDown.size(22).foregroundStyle(.secondaryText)
+                                .padding(.top, chevronTop)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("\(home.selectedFamily?.name ?? ""), switch family"))
+                } else {
+                    familyTitle
+                        .contextMenu {
+                            Button { showAddFamily = true } label: {
+                                Label { Text("Add another family") } icon: { Icon.plus.image }
+                            }
+                        }
+                }
+                Spacer(minLength: 8)
+                GlassIconButton(icon: .settings, label: "Family settings") { showSettings = true }
+                    .disabled(home.today == nil)
             }
-            Spacer(minLength: 8)
-            Button {
-                showSettings = true
-            } label: {
-                Icon.settings.size(24)
-                    .frame(width: 48, height: 48)
-                    .background(.surface, in: .circle)
+            if !home.members.isEmpty {
+                togetherRow
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityLabel("Family settings")
-            .disabled(home.today == nil)
         }
-        .padding(.top, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
     }
 
     private var familyTitle: some View {
@@ -154,6 +153,24 @@ struct HomeView: View {
             .foregroundStyle(.primary)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Overlapping avatars and how many are in the family: who this is for.
+    private var togetherRow: some View {
+        HStack(spacing: 10) {
+            AvatarStack(people: home.members.map { AvatarStack.Person(id: $0.userId, name: $0.name, hex: $0.avatarColor) })
+            Group {
+                if home.members.count == 1 {
+                    Text("Just you so far")
+                } else {
+                    Text("\(home.members.count) walking together")
+                }
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Activity
@@ -193,13 +210,15 @@ struct HomeView: View {
         case .failed(let message) where home.today == nil:
             Notice(text: message) { Task { await home.reload() } }
         default:
-            ProgressCard(total: home.total, goal: home.goal, percent: home.percent, fraction: home.ringFraction, reached: home.isGoalReached)
-            SyncStatusRow(lastSyncedAt: stepSync.lastSyncedAt, isSyncing: stepSync.isSyncing)
+            TodayTile(
+                total: home.total, goal: home.goal, percent: home.percent,
+                fraction: home.ringFraction, reached: home.isGoalReached, members: members
+            )
             if let walk {
                 WalkButton(controller: walk)
             }
-            StatusEntry(status: myStatus) { showStatusPicker = true }
-            ContributionsCard(members: members, currentUserId: session.user?.id)
+            halfTiles
+            ContributionsCard(members: members, currentUserId: session.user?.id, familyTotal: home.total)
             if !home.week.isEmpty {
                 WeekCard(days: home.week, today: home.today?.day)
             }
@@ -207,6 +226,18 @@ struct HomeView: View {
                 FeedCard(model: feed, highlightedEventId: highlightedEventId)
             }
         }
+    }
+
+    /// Status and sync side by side; stacked at accessibility text sizes.
+    private var halfTiles: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: Bento.gap))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: Bento.gap))
+        return layout {
+            StatusTile(status: myStatus) { showStatusPicker = true }
+            SyncTile(lastSyncedAt: stepSync.lastSyncedAt, isSyncing: stepSync.isSyncing)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -252,45 +283,78 @@ extension HomeView {
     }
 }
 
-// MARK: - Progress ring
+// MARK: - Today
 
-struct ProgressCard: View {
+/// The family's total against the goal, the ring, and a few plain facts.
+struct TodayTile: View {
     let total: Int
     let goal: Int
     let percent: Int
     let fraction: Double
     let reached: Bool
+    let members: [FamilyMember]
+    @Environment(\.now) private var now
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        Card {
-            VStack(spacing: 20) {
-                ProgressRing(fraction: fraction, percent: percent, reached: reached)
-                    .frame(maxWidth: .infinity)
-                VStack(spacing: 6) {
-                    Text(StepFormatter.count(total))
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .monospacedDigit()
-                        .contentTransition(.numericText(value: Double(total)))
-                    Text("of \(StepFormatter.count(goal)) steps today")
-                        .font(.title3)
-                        .foregroundStyle(.secondaryText)
-                    Text(reached
-                         ? String(localized: "Goal reached! Well walked, everyone.")
-                         : String(localized: "\(StepFormatter.count(goal - total)) more steps to go, together"))
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(reached ? Color.goal : Color.primary)
-                        .padding(.top, 4)
+        // Ticks so the "walking now" chip drops when a walk ends.
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            tile(now: now())
+        }
+    }
+
+    private func tile(now: Date) -> some View {
+        let synced = members.filter { $0.steps != nil }.count
+        let walking = members.filter { member in member.activeWalk.map { !$0.isOver(at: now) } ?? false }.count
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return Card(title: "Today", icon: .home) {
+            VStack(alignment: .leading, spacing: 16) {
+                layout {
+                    totals
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                    ProgressRing(fraction: fraction, percent: percent, reached: reached)
                 }
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("Family steps today"))
+                .accessibilityValue(Text(reached
+                    ? "\(StepFormatter.count(total)) of \(StepFormatter.count(goal)). Goal reached, \(percent) percent."
+                    : "\(StepFormatter.count(total)) of \(StepFormatter.count(goal)), \(percent) percent."))
+
+                if synced > 0 || walking > 0 {
+                    ActivityWrapLayout(spacing: 6) {
+                        if synced > 0 {
+                            InfoChip(icon: .tick, text: String(localized: "\(synced) of \(members.count) synced"))
+                        }
+                        if walking > 0 {
+                            InfoChip(icon: .walking, text: String(localized: "\(walking) walking now"))
+                        }
+                    }
+                }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Family steps today"))
-        .accessibilityValue(Text(reached
-            ? "\(StepFormatter.count(total)) of \(StepFormatter.count(goal)). Goal reached, \(percent) percent."
-            : "\(StepFormatter.count(total)) of \(StepFormatter.count(goal)), \(percent) percent."))
+    }
+
+    private var totals: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(StepFormatter.count(total))
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: Double(total)))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text("of \(StepFormatter.count(goal)) steps")
+                .font(.subheadline)
+                .foregroundStyle(.secondaryText)
+            Text(reached
+                 ? String(localized: "Goal reached! Well walked, everyone.")
+                 : String(localized: "\(StepFormatter.count(max(goal - total, 0))) more to go, together"))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(reached ? Color.goalText : Color.accentText)
+                .padding(.top, 8)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -300,14 +364,22 @@ struct ProgressRing: View {
     let fraction: Double
     let percent: Int
     let reached: Bool
+    private let base: CGFloat
+    @ScaledMetric private var diameter: CGFloat
 
-    @ScaledMetric(relativeTo: .largeTitle) private var diameter: CGFloat = 210
-    private let lineWidth: CGFloat = 22
+    init(fraction: Double, percent: Int, reached: Bool, diameter: CGFloat = 124) {
+        self.fraction = fraction
+        self.percent = percent
+        self.reached = reached
+        self.base = diameter
+        _diameter = ScaledMetric(wrappedValue: diameter, relativeTo: .largeTitle)
+    }
 
     var body: some View {
-        // Capped so at accessibility sizes the ring doesn't fill the card and
-        // push the totals below the fold; the text around it grows instead.
-        let size = min(diameter, 240)
+        // Capped so at accessibility sizes the ring doesn't fill the tile;
+        // the text around it grows instead.
+        let size = min(diameter, base * 1.3)
+        let lineWidth = size * 0.11
         ZStack {
             Circle()
                 .stroke(.surfaceMuted, lineWidth: lineWidth)
@@ -322,9 +394,9 @@ struct ProgressRing: View {
                     .stroke(Color.goal.opacity(0.45), style: StrokeStyle(lineWidth: lineWidth * 0.55, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            VStack(spacing: 4) {
+            VStack(spacing: 2) {
                 if reached {
-                    Icon.celebrate.size(size * 0.14).foregroundStyle(.goal)
+                    Icon.celebrate.size(size * 0.17).foregroundStyle(.goalText)
                 }
                 Text("\(percent)%")
                     .font(.system(size: size * 0.22, weight: .bold, design: .rounded))
@@ -333,46 +405,116 @@ struct ProgressRing: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             }
-            .padding(lineWidth + 8)
+            .padding(lineWidth + 6)
         }
         .frame(width: size, height: size)
         .animation(.spring(duration: 0.8), value: fraction)
     }
 }
 
-// MARK: - Last synced
+// MARK: - Half tiles
 
-struct SyncStatusRow: View {
-    let lastSyncedAt: Date?
-    let isSyncing: Bool
+/// A small (half-width) tile.
+struct SmallTile<Content: View>: View {
+    @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: 10) {
-            if isSyncing {
-                OrbLoader(activity: .syncingSteps, compact: true)
-                Text("Sending your steps…")
-            } else {
-                Icon.clock.size(20)
-                if let lastSyncedAt {
-                    Text("Your steps synced \(lastSyncedAt, format: .relative(presentation: .named))")
-                } else {
-                    Text("Your steps haven't synced yet. Pull down to try.")
+        content
+            .padding(Bento.smallPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .bentoSurface(radius: Bento.smallRadius)
+    }
+}
+
+/// "Status" (set one) or "Your status" (change it). Opens the status picker.
+struct StatusTile: View {
+    let status: MemberStatus?
+    let action: () -> Void
+    @Environment(\.now) private var now
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 22
+
+    var body: some View {
+        let active = status.flatMap { $0.isActive(at: now()) ? $0 : nil }
+        Button(action: action) {
+            SmallTile {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ((active?.preset?.icon) ?? (active == nil ? .edit : .statusCustom)).size(iconSize)
+                            .foregroundStyle(.accentText)
+                        Spacer(minLength: 4)
+                        Icon.chevronRight.size(16).foregroundStyle(.secondaryText)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(active == nil ? "Status" : "Your status")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondaryText)
+                        Text(active?.displayText ?? String(localized: "Set my status"))
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .contentShape(.rect(cornerRadius: Bento.smallRadius, style: .continuous))
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 4)
+        .buttonStyle(.plain)
+        .accessibilityLabel(active?.displayText.map { Text("Your status: \($0)") } ?? Text("Set my status"))
+        .accessibilityHint(Text("Choose what your family sees next to your name."))
+    }
+}
+
+/// When the viewer's own steps last reached the family.
+struct SyncTile: View {
+    let lastSyncedAt: Date?
+    let isSyncing: Bool
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 22
+
+    var body: some View {
+        SmallTile {
+            VStack(alignment: .leading, spacing: 10) {
+                if isSyncing {
+                    OrbLoader(activity: .syncingSteps, compact: true)
+                        .frame(height: iconSize)
+                } else {
+                    Icon.clock.size(iconSize).foregroundStyle(.secondaryText)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your steps")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondaryText)
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        Group {
+                            if isSyncing {
+                                Text("Sending…")
+                            } else if let lastSyncedAt {
+                                Text("Synced \(lastSyncedAt, format: .relative(presentation: .named))")
+                            } else {
+                                Text("Not synced yet")
+                            }
+                        }
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    }
+                    if !isSyncing && lastSyncedAt == nil {
+                        Text("Pull down to try.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondaryText)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
         .accessibilityElement(children: .combine)
     }
 }
 
-// MARK: - Contributions
+// MARK: - Everyone today
 
 struct ContributionsCard: View {
     let members: [FamilyMember]
     let currentUserId: String?
+    /// Today's family total; each bar is a member's share of it.
+    var familyTotal: Int = 0
     @Environment(\.now) private var now
 
     var body: some View {
@@ -384,17 +526,19 @@ struct ContributionsCard: View {
     }
 
     private func card(now: Date) -> some View {
-        Card {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Everyone's steps today")
-                    .font(.title3.weight(.semibold))
-                    .padding(.bottom, 8)
-                ForEach(Array(members.enumerated()), id: \.element.id) { index, member in
-                    if index > 0 { Divider().padding(.leading, 64) }
-                    MemberRow(member: member, isYou: member.userId == currentUserId, now: now)
+        Card(title: "Everyone today", icon: .family) {
+            VStack(alignment: .leading, spacing: 18) {
+                // Fixed family order: shares are shown, never ranked.
+                ForEach(members) { member in
+                    MemberRow(member: member, isYou: member.userId == currentUserId, now: now, share: share(of: member))
                 }
             }
         }
+    }
+
+    private func share(of member: FamilyMember) -> Double {
+        guard familyTotal > 0, let steps = member.steps, steps > 0 else { return 0 }
+        return min(Double(steps) / Double(familyTotal), 1)
     }
 }
 
@@ -402,37 +546,55 @@ struct MemberRow: View {
     let member: FamilyMember
     let isYou: Bool
     var now: Date = .now
+    /// The member's share of today's family total, 0...1.
+    var share: Double = 0
     @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var crownSize: CGFloat = 15
+
+    private var displayName: String {
+        isYou ? String(localized: "\(member.name) (you)") : member.name
+    }
+
+    private var isWalking: Bool {
+        member.activeWalk.map { !$0.isOver(at: now) } ?? false
+    }
 
     var body: some View {
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 14))
-        layout {
-            HStack(spacing: 14) {
-                Avatar(name: member.name, hex: member.avatarColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isYou ? String(localized: "\(member.name) (you)") : member.name)
-                        .font(.title3.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if member.isOrganiser {
-                        HStack(spacing: 4) {
-                            Icon.organiser.size(14)
-                            Text("Organiser")
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(.secondaryText)
-                    }
-                    if let walk = member.activeWalk, !walk.isOver(at: now) {
-                        WalkingBadge()
-                    }
-                    StatusLabel(status: member.status, now: now)
+        HStack(alignment: .top, spacing: 12) {
+            Avatar(name: member.name, hex: member.avatarColor)
+                .overlay(alignment: .bottomTrailing) {
+                    if isWalking { WalkingDot().offset(x: 4, y: 4) }
                 }
+            VStack(alignment: .leading, spacing: 8) {
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                layout {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(displayName)
+                                .font(.body.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                                // The crown says it visually; VoiceOver gets the word.
+                                .accessibilityLabel(member.isOrganiser ? Text("\(displayName), organiser") : Text(displayName))
+                            if member.isOrganiser {
+                                Icon.organiser.size(crownSize)
+                                    .foregroundStyle(.accentText)
+                            }
+                        }
+                        if isWalking {
+                            Text("Walking now")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.accentText)
+                        }
+                        StatusLabel(status: member.status, now: now)
+                    }
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
+                    steps
+                }
+                ShareBar(share: share, color: Color(hex: member.avatarColor))
             }
-            if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
-            steps
         }
-        .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
     }
 
@@ -440,57 +602,38 @@ struct MemberRow: View {
     private var steps: some View {
         if let value = member.steps {
             Text(StepFormatter.count(value))
-                .font(.system(.title2, design: .rounded, weight: .bold))
+                .font(.system(.title3, design: .rounded, weight: .bold))
                 .monospacedDigit()
                 .fixedSize()
                 .accessibilityLabel(Text(StepFormatter.withUnit(value)))
         } else {
             Text("not synced yet")
-                .font(.body)
+                .font(.subheadline)
                 .foregroundStyle(.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-// MARK: - Status entry
-
-/// "Set my status" on Home, or the viewer's current status with a way to
-/// change it. Opens the status picker.
-struct StatusEntry: View {
-    let status: MemberStatus?
-    let action: () -> Void
-    @Environment(\.now) private var now
+/// A thin bar in the member's colour: their share of today's family total.
+/// Not a ranking; the family order stays fixed.
+struct ShareBar: View {
+    let share: Double
+    let color: Color
 
     var body: some View {
-        let active = status.flatMap { $0.isActive(at: now()) ? $0 : nil }
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ((active?.preset?.icon) ?? (active == nil ? .edit : .statusCustom)).size(20)
-                    .foregroundStyle(.accentText)
-                VStack(alignment: .leading, spacing: 2) {
-                    if let text = active?.displayText {
-                        Text("Your status").font(.footnote).foregroundStyle(.secondaryText)
-                        Text(text).font(.body.weight(.semibold)).foregroundStyle(.primary)
-                    } else {
-                        Text("Set my status").font(.body.weight(.semibold)).foregroundStyle(.primary)
-                        Text("Let your family know what you're up to.")
-                            .font(.footnote).foregroundStyle(.secondaryText)
-                    }
+        Capsule()
+            .fill(.surfaceMuted)
+            .frame(height: 4)
+            .overlay(alignment: .leading) {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(color)
+                        .frame(width: share > 0 ? max(proxy.size.width * share, 4) : 0)
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Icon.chevronRight.size(16).foregroundStyle(.secondaryText)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.surface, in: .rect(cornerRadius: 24))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(active?.displayText.map { Text("Your status: \($0)") } ?? Text("Set my status"))
-        .accessibilityHint(Text("Choose what your family sees next to your name."))
+            .animation(.spring(duration: 0.6), value: share)
+            .accessibilityHidden(true)
     }
 }
 
@@ -501,14 +644,9 @@ struct FeedCard: View {
     var highlightedEventId: String?
 
     var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Family moments")
-                    .font(.title3.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                FeedList(model: model, highlightedEventId: highlightedEventId)
-                    .id(model.familyId)
-            }
+        Card(title: "Family moments", icon: .moments) {
+            FeedList(model: model, highlightedEventId: highlightedEventId)
+                .id(model.familyId)
         }
     }
 }
@@ -525,13 +663,18 @@ struct WeekCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("This week")
-                        .font(.title3.weight(.semibold))
-                    if hitCount > 0 {
-                        Text(hitCount == 1 ? String(localized: "Goal reached on 1 day") : String(localized: "Goal reached on \(hitCount) days"))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondaryText)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        TileLabel("This week", icon: .calendar)
+                        Spacer(minLength: 8)
+                        // One line, so ViewThatFits falls back to the stack
+                        // when it doesn't fit beside the label.
+                        hits.fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        TileLabel("This week", icon: .calendar)
+                        // Stacked fallback: the summary may wrap here.
+                        hits.fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: typeSize.isAccessibilitySize ? 4 : 7), spacing: 14) {
@@ -542,30 +685,39 @@ struct WeekCard: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var hits: some View {
+        if hitCount > 0 {
+            Text(hitCount == 1 ? String(localized: "Goal reached on 1 day") : String(localized: "Goal reached on \(hitCount) days"))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.goalText)
+        }
+    }
 }
 
 struct WeekDayMarker: View {
     let day: FamilyWeekDay
     let isToday: Bool
-    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 38
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 36
 
     private var date: Date? { NepalDay.start(of: day.day) }
 
     var body: some View {
         VStack(spacing: 6) {
             Text(date.map { $0.formatted(Date.FormatStyle(timeZone: NepalDay.timeZone).weekday(.narrow)) } ?? "")
-                .font(.footnote.weight(isToday ? .bold : .regular))
-                .foregroundStyle(isToday ? Color.primary : Color.secondaryText)
+                .font(.footnote.weight(isToday ? .bold : .medium))
+                .foregroundStyle(isToday ? Color.accentText : Color.secondaryText)
                 .opacity(day.isBeforeFamily ? 0.5 : 1)
             ZStack {
                 if day.hit {
                     Circle().fill(.goal)
                     Icon.tick.size(size * 0.5).foregroundStyle(.white)
                 } else if day.isBeforeFamily {
-                    Circle().fill(Color.secondary.opacity(0.08))
+                    Circle().fill(Color.surfaceMuted.opacity(0.5))
                 } else if day.isFuture {
-                    Circle().strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [3, 4]))
-                } else {
+                    Circle().strokeBorder(Color.secondaryText.opacity(0.3), lineWidth: 1)
+                } else if !isToday {
                     Circle().fill(.surfaceMuted)
                 }
                 if isToday && !day.hit {

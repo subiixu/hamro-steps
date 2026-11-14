@@ -139,25 +139,26 @@ struct WalkButton: View {
     }
 
     private var idle: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Button(action: onStart) {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     if isWorking {
                         OrbLoader(compact: true).accessibilityHidden(true)
                     } else {
-                        Icon.walking.size(28)
+                        Icon.walking.size(26)
                     }
                     Text("I'm walking")
-                        .font(.title2.weight(.bold))
+                        .font(.title3.weight(.bold))
                 }
-                .frame(maxWidth: .infinity, minHeight: 72)
+                // The glass style adds about 12pt of padding: 60pt in all.
+                .frame(maxWidth: .infinity, minHeight: 48)
                 .foregroundStyle(.white)
-                .background(.accent, in: .rect(cornerRadius: 24))
-                .contentShape(.rect(cornerRadius: 24))
+                .contentShape(.rect(cornerRadius: Bento.radius, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.roundedRectangle(radius: Bento.radius))
+            .tint(.accent)
             .disabled(isWorking || notice == .limitReached)
-            .opacity(notice == .limitReached ? 0.45 : 1)
             .accessibilityHint(Text("Lets your family know you're out for a walk."))
 
             Group {
@@ -167,59 +168,63 @@ struct WalkButton: View {
                     Text("Your family gets an alert, so they can walk with you or give you a call.")
                 }
             }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .font(.footnote)
+            .foregroundStyle(.secondaryText)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
         }
     }
 
     private func walking(_ walk: ActiveWalk, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 WalkingBadge(label: "You're walking")
                 Text(ActivityFormat.walkingFor(walk, now: now))
-                    .font(.title.weight(.bold))
+                    .font(.system(.title, design: .rounded, weight: .bold))
                     .monospacedDigit()
                     .contentTransition(.numericText())
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
                     Icon.clock.size(clockSize)
                     Text(ActivityFormat.autoStop(walk))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.secondaryText)
             }
             .accessibilityElement(children: .combine)
 
             if let notice, notice != .limitReached {
                 Text(notice.message)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Button(action: onStop) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     if isWorking {
                         OrbLoader(compact: true).accessibilityHidden(true)
                     } else {
-                        Icon.stop.size(22)
+                        Icon.stop.size(20)
                     }
                     Text("Stop walk")
-                        .font(.title3.weight(.semibold))
+                        .font(.body.weight(.semibold))
                 }
-                .frame(maxWidth: .infinity, minHeight: 60)
-                .foregroundStyle(.primary)
-                .background(.surface, in: .rect(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.secondary.opacity(0.35), lineWidth: 1.5))
-                .contentShape(.rect(cornerRadius: 20))
+                .frame(maxWidth: .infinity, minHeight: 40)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            // Neutral words: stopping is calm, not an accent action.
+            .tint(.primary)
             .disabled(isWorking)
         }
-        .padding(20)
+        .padding(Bento.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accent.opacity(0.12), in: .rect(cornerRadius: 24))
+        // Soft orange on white, so the tile reads the same on any canvas.
+        .bentoSurface(Color.accent.opacity(0.08))
+        .background(.surface, in: .rect(cornerRadius: Bento.radius, style: .continuous))
     }
 }
 

@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Named colours from SharedAssets.xcassets/Colors, each with a dark variant.
+/// Named colours from SharedAssets.xcassets/Colors. The app is light mode
+/// only (UIUserInterfaceStyle Light), so there are no dark variants.
 /// Views use these (or system semantic styles like `.primary`), never literals.
 /// Declared on `ShapeStyle where Self == Color` so both `Color.canvas` and
 /// `.foregroundStyle(.canvas)` work.
@@ -12,14 +13,17 @@ extension ShapeStyle where Self == Color {
     static var canvas: Color { Color("Canvas") }
     static var surface: Color { Color("Surface") }
     static var surfaceMuted: Color { Color("SurfaceMuted") }
-    /// Goal reached: the ring past 100% and the "hit" week markers.
+    /// Goal reached: the ring past 100% and the "hit" week markers. Fills and
+    /// large shapes only; it fails AA as small text, so text uses `goalText`.
     static var goal: Color { Color("Goal") }
-    /// Accent for text, links and small icons: darker than `accent` in light
-    /// mode so it passes WCAG AA (4.5:1) on canvas, surface and surfaceMuted.
+    /// Green text ("Goal reached!"): darker than `goal`, passes AA on surface
+    /// and canvas.
+    static var goalText: Color { Color("GoalText") }
+    /// Accent for text, links and small icons: darker than `accent` so it passes WCAG AA (4.5:1) on canvas, surface and surfaceMuted.
     /// Use as `.tint(.accentText)` on lists and bordered buttons.
     static var accentText: Color { Color("AccentText") }
     /// Secondary text (subtitles, hints). Replaces system `.secondary`, whose
-    /// grey falls below AA on the cream canvas.
+    /// grey falls below AA on the grey canvas.
     static var secondaryText: Color { Color("SecondaryText") }
 }
 

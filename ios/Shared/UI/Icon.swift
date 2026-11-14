@@ -29,6 +29,8 @@ enum Icon: String, CaseIterable, Sendable {
     case logout = "icon-logout"              // logout-01: sign out, leave family
     case delete = "icon-delete"              // delete-02: delete account
     case close = "icon-close"                // cancel-01: close a sheet
+    case calendar = "icon-calendar"          // calendar-03: "This week"
+    case moments = "icon-moments"            // favourite: "Family moments"
 
     // Activity: walks, status, feed, notifications
     case walking = "icon-walking"            // walking: "I'm walking", badge

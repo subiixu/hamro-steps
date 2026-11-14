@@ -104,7 +104,7 @@ struct FeedList: View {
                         .foregroundStyle(.goal)
                     Text("Nothing here yet today. When someone passes 5,000 steps or starts a walk, you'll see it here.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.secondaryText)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
@@ -139,7 +139,7 @@ struct FeedList: View {
         VStack(spacing: 10) {
             Text("We couldn't get the latest family news.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.secondaryText)
                 .multilineTextAlignment(.center)
             Button("Try again") { Task { await model.load() } }
                 .font(.body.weight(.semibold))
@@ -160,6 +160,9 @@ struct FeedRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ActivityAvatar(content: event.actor.map(ActivityAvatar.Content.member) ?? .family)
+                .overlay(alignment: .bottomTrailing) {
+                    FeedTypeBadge(type: event.type).offset(x: 4, y: 4)
+                }
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(event.text(viewerId: viewerId))
@@ -167,7 +170,7 @@ struct FeedRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Text(ActivityFormat.relative(event.createdDate, now: now))
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.secondaryText)
                 }
                 .accessibilityElement(children: .combine)
                 ReactionBar(event: event, onReact: onReact)
@@ -210,7 +213,7 @@ struct ReactionChip: View {
                         .font(.subheadline.weight(.semibold))
                         .monospacedDigit()
                         .contentTransition(.numericText())
-                        .foregroundStyle(isMine ? Color.accent : Color.secondary)
+                        .foregroundStyle(isMine ? Color.accentText : Color.secondaryText)
                 }
             }
             .padding(.horizontal, 8)
