@@ -6,3 +6,5 @@
 - Built for parents: large text, few screens, plain words, nothing to configure after joining; English only; no location <!-- from 17 · 2026-11-14T13:59 -->
 - Family day closes at midnight Nepal time (UTC+5:45) for everyone; family size 3–8 <!-- from 17 · 2026-11-14T13:59 -->
 - Stack: native SwiftUI + HealthKit (iPhone only), Convex backend (per PRD); invites are code-first for the pilot (link opens a page with the 6-char code + TestFlight link), no deferred deep links until a domain exists <!-- from 20 · 2026-11-14T14:01 -->
+- User wants maximum parallelism: run as many workers as can work independently to finish fast <!-- from 25 · 2026-11-14T14:05 -->
+- Apple Developer team ID: JQ2D4NNS3B <!-- from 63 · 2026-11-14T14:46 -->
