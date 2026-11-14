@@ -21,7 +21,7 @@ A walk belongs to a user and shows in every family they're in.
 ## Feed (F13)
 - `feed(familyId)` → events from the last 3 Nepal days, newest first, at most 100.
 - Each event: `{id, type, actor: {userId, name, avatarColor} | null, day, createdAt, data, reactions: [{emoji, count}], myReaction: emoji | null}`.
-- Types, each created at most once per (family, actor, day, type):
+- Types. `member_*` and `family_*` are created at most once per (family, actor, day, type). `walk_started` is created once per walk (per family), so up to 3 per member per day:
   - `member_5k` / `member_10k`: on `syncSteps` crossing 5,000 or 10,000 for today.
   - `family_50` / `family_100`: on the family total crossing 50% or 100% of today's goal; `actor` is null.
   - `walk_started`, with `data.walkId`.
