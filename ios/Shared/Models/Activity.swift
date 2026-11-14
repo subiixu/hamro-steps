@@ -289,6 +289,21 @@ struct FeedActor: Codable, Equatable, Sendable {
     var name: String
     /// Hex, e.g. "#E4572E", from the backend's 8-colour palette.
     var avatarColor: String
+
+    init(userId: String, name: String, avatarColor: String) {
+        self.userId = userId
+        self.name = name
+        self.avatarColor = avatarColor
+    }
+
+    /// The backend sends `name: null` (or leaves it out) for someone who hasn't
+    /// given a name yet; that becomes "" the way `familyToday` members do.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userId = try c.decode(String.self, forKey: .userId)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        avatarColor = try c.decode(String.self, forKey: .avatarColor)
+    }
 }
 
 struct FeedEventData: Codable, Equatable, Sendable {

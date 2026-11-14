@@ -613,6 +613,8 @@ struct PushTapTests {
         await inbox.open(session: session, home: home)
         #expect(inbox.pending == nil)
         #expect(home.selectedFamilyId == other)
+        // The event the push was about waits for Home to bring it into view.
+        #expect(home.takeFocus() == "e_1")
     }
 
     @Test func tapForAFamilyThePersonIsNotInLeavesHomeAsItWas() async throws {
@@ -630,5 +632,23 @@ struct PushTapTests {
         await inbox.open(session: session, home: home)
         #expect(inbox.pending == nil)
         #expect(home.selectedFamilyId == before)
+        #expect(home.focusEventId == nil)
+    }
+
+    @Test func tapWithoutAnEventShowsTheFamilyWithNoFocus() async throws {
+        let backend = MockFamilyService.sample(signedIn: true)
+        let defaults = TestTime.defaults()
+        defaults.set(true, forKey: "healthOnboardingDone")
+        let session = SessionStore(auth: MockAuthService(backend: backend, defaults: nil), service: backend, defaults: defaults)
+        let home = HomeModel(service: backend, defaults: TestTime.defaults())
+        await session.start()
+        await home.update(families: session.families)
+        let other = try #require(session.families.last?.id)
+
+        let inbox = PushInbox()
+        inbox.received(PushPayload(kind: .walkStarted, familyId: other, eventId: nil))
+        await inbox.open(session: session, home: home)
+        #expect(home.selectedFamilyId == other)
+        #expect(home.focusEventId == nil)
     }
 }

@@ -21,6 +21,10 @@ final class HomeModel {
     private(set) var phase: Phase = .loading
     /// The Nepal day the loaded week was built for.
     private(set) var loadedDay: String?
+    /// A feed event to bring into view, from a tapped notification. Home
+    /// scrolls to it once its feed has loaded, then takes it with
+    /// `takeFocus()` so it's shown once.
+    private(set) var focusEventId: String?
 
     private let service: any FamilyService
     private let defaults: UserDefaults
@@ -89,6 +93,18 @@ final class HomeModel {
     func prefer(_ familyId: String) {
         selectedFamilyId = familyId
         defaults.set(familyId, forKey: Self.selectedKey)
+    }
+
+    /// Ask Home to bring this feed event into view (see `focusEventId`).
+    func focus(eventId: String) {
+        focusEventId = eventId
+    }
+
+    /// The event to bring into view, handed out once: later calls return
+    /// nil until `focus(eventId:)` sets a new one.
+    func takeFocus() -> String? {
+        defer { focusEventId = nil }
+        return focusEventId
     }
 
     func select(_ familyId: String?) async {

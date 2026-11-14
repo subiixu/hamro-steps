@@ -190,18 +190,26 @@ struct ConvexActivityServiceTests {
     @Test func registerDeviceReturnsPromptlyWhenCancelled() async throws {
         let h = await HangingHarness()
         let task = Task { try await h.activity.registerDevice(apnsToken: "abc", environment: .sandbox) }
-        await h.waitUntilHanging()
+        #expect(await h.waitUntilHanging(), "the device call never reached the transport")
+        // If cancellation regresses, the call is released after a second and
+        // fails the checks below instead of hanging the test run.
+        let watchdog = h.releaseAfterDeadline()
         let elapsed = try await Self.cancelAndTime(task)
         #expect(elapsed < .milliseconds(100))
+        watchdog.cancel()
         await h.release()
     }
 
     @Test func unregisterDeviceReturnsPromptlyWhenCancelled() async throws {
         let h = await HangingHarness()
         let task = Task { try await h.activity.unregisterDevice(apnsToken: "abc") }
-        await h.waitUntilHanging()
+        #expect(await h.waitUntilHanging(), "the device call never reached the transport")
+        // If cancellation regresses, the call is released after a second and
+        // fails the checks below instead of hanging the test run.
+        let watchdog = h.releaseAfterDeadline()
         let elapsed = try await Self.cancelAndTime(task)
         #expect(elapsed < .milliseconds(100))
+        watchdog.cancel()
         await h.release()
     }
 
@@ -211,8 +219,16 @@ struct ConvexActivityServiceTests {
             withUnsafeCurrentTask { $0?.cancel() }
             try await h.activity.unregisterDevice(apnsToken: "abc")
         }
+        // A call that does get sent hangs; release it rather than hang the run.
+        let watchdog = h.releaseAfterDeadline()
         await #expect(throws: CancellationError.self) { try await task.value }
+        // The call has returned, but a send could still be on its way from
+        // work it started: give it a bounded moment to reach the transport.
+        #expect(await h.waitUntilHanging(deadline: .milliseconds(300)) == false)
+        watchdog.cancel()
+        #expect(h.transport.hangingCalls.isEmpty)
         #expect(!h.transport.calls.contains { $0.name == "notifications:unregisterDevice" })
+        await h.release()
     }
 
     @Test func deviceCallsStillReturnTheirResultAndErrors() async throws {
@@ -252,19 +268,40 @@ private struct HangingHarness {
         activity = ConvexActivityService(connection: ConvexConnection(transport: transport, session: base.session))
     }
 
-    func waitUntilHanging() async {
-        while await transport.gate.waiting == 0 { await Task.yield() }
+    /// Waits for a device call to reach the gate, for at most `deadline`.
+    /// False if none did.
+    func waitUntilHanging(deadline: Duration = .seconds(2)) async -> Bool {
+        let clock = ContinuousClock()
+        let end = clock.now + deadline
+        while await transport.gate.waiting == 0 {
+            if clock.now >= end { return false }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return true
+    }
+
+    /// Opens the gate after `deadline` unless cancelled first, so a call that
+    /// ignores cancellation fails its test instead of hanging it.
+    func releaseAfterDeadline(_ deadline: Duration = .seconds(1)) -> Task<Void, Never> {
+        let gate = transport.gate
+        return Task {
+            guard (try? await Task.sleep(for: deadline)) != nil else { return }
+            await gate.open()
+        }
     }
 
     func release() async { await transport.gate.open() }
 }
 
 /// `FakeTransport`, except the `hanging` functions wait on `gate`, ignoring
-/// cancellation, the way a stuck network call would.
+/// cancellation, the way a stuck network call would. Those calls are
+/// recorded in `hangingCalls`, not in the base's `calls`.
 private final class HangingTransport: ConvexTransport, @unchecked Sendable {
     let base: FakeTransport
     let hanging: Set<String>
     let gate = TestGate()
+    private let lock = NSLock()
+    private var _hangingCalls: [String] = []
 
     init(base: FakeTransport, hanging: Set<String>) {
         self.base = base
@@ -272,6 +309,8 @@ private final class HangingTransport: ConvexTransport, @unchecked Sendable {
     }
 
     var calls: [FakeTransport.Call] { base.calls }
+    /// The `hanging` functions called so far, by name.
+    var hangingCalls: [String] { lock.withLock { _hangingCalls } }
 
     func query<T: Decodable & Sendable>(_ name: String, args: [String: ConvexArg]) async throws -> T {
         try await base.query(name, args: args)
@@ -279,6 +318,7 @@ private final class HangingTransport: ConvexTransport, @unchecked Sendable {
 
     func mutation<T: Decodable & Sendable>(_ name: String, args: [String: ConvexArg]) async throws -> T {
         if hanging.contains(name) {
+            lock.withLock { _hangingCalls.append(name) }
             await gate.wait()
             throw ConvexCallError.client("released")
         }

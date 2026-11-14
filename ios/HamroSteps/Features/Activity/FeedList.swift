@@ -78,6 +78,9 @@ final class FeedModel {
 /// inside a screen's ScrollView.
 struct FeedList: View {
     let model: FeedModel
+    /// An event brought into view from a notification, shown on a soft
+    /// background for a moment.
+    var highlightedEventId: String?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -115,6 +118,15 @@ struct FeedList: View {
                         Task { await model.react(emoji, to: event.id) }
                     }
                     .padding(.vertical, 14)
+                    .background {
+                        if event.id == highlightedEventId {
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(.accent.opacity(0.12))
+                                .padding(.horizontal, -8)
+                                .transition(.opacity)
+                        }
+                    }
+                    .id(event.id)
                     if event.id != model.events.last?.id {
                         Divider()
                     }

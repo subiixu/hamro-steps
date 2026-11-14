@@ -56,11 +56,15 @@ struct WelcomeView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondaryText)
                     #if DEBUG
-                    Button("Use the sample account (debug)") {
-                        signIn(token: "debug-token", code: "debug-code", name: nil)
+                    // The sample token only works against the mock services; the real
+                    // `/auth/apple` rejects it, so the button shows on mock launches only.
+                    if AppLaunch.isMockLaunch {
+                        Button("Use the sample account (debug)") {
+                            signIn(token: "debug-token", code: "debug-code", name: nil)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.secondaryText)
                     }
-                    .font(.footnote)
-                    .foregroundStyle(.secondaryText)
                     #endif
                 }
             }

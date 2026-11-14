@@ -13,6 +13,11 @@ struct HomeView: View {
 
     @State private var walk: WalkController?
     @State private var feed: FeedModel?
+    /// The feed event a tapped notification brought into view, softly
+    /// highlighted for a moment.
+    @State private var highlightedEventId: String?
+    /// The running focus from the latest tap; a newer tap cancels it.
+    @State private var focusTask: Task<Void, Never>?
     @State private var showStatusPicker = false
     /// The status just saved or cleared here, shown until `familyToday`
     /// catches up. `.some(nil)` means cleared.
@@ -26,21 +31,24 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
-                    content
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        header
+                        content
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
-            }
-            // Room below the last card so the floating tab bar never sits on it.
-            .contentMargins(.bottom, 72, for: .scrollContent)
-            .background(.canvas)
-            .refreshable {
-                await stepSync.sync()
-                await home.reload()
-                await feed?.load()
+                // Room below the last card so the floating tab bar never sits on it.
+                .contentMargins(.bottom, 72, for: .scrollContent)
+                .background(.canvas)
+                .refreshable {
+                    await stepSync.sync()
+                    await home.reload()
+                    await feed?.load()
+                }
+                .onChange(of: focusCheck, initial: true) { showFocusedEvent(proxy) }
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
         }
@@ -52,6 +60,11 @@ struct HomeView: View {
             if let familyId = home.selectedFamilyId, feed?.familyId != familyId {
                 feed = FeedModel(service: activity, familyId: familyId, viewerId: session.user?.id)
             }
+        }
+        .task(id: highlightedEventId) {
+            guard highlightedEventId != nil,
+                  (try? await Task.sleep(for: .seconds(2.5))) != nil else { return }
+            withAnimation(.easeOut(duration: 0.6)) { highlightedEventId = nil }
         }
         .onChange(of: viewer?.walkingSince, initial: true) { syncWalk() }
         .onChange(of: viewer?.walkEndsAt) { syncWalk() }
@@ -191,8 +204,50 @@ struct HomeView: View {
                 WeekCard(days: home.week, today: home.today?.day)
             }
             if let feed {
-                FeedCard(model: feed)
+                FeedCard(model: feed, highlightedEventId: highlightedEventId)
             }
+        }
+    }
+}
+
+// MARK: - Focus from a tapped notification
+
+extension HomeView {
+    /// What decides whether a tapped notification's event can be shown yet.
+    struct FocusCheck: Equatable {
+        var eventId: String?
+        var feedFamilyId: String?
+        var feedPhase: FeedModel.Phase?
+    }
+
+    var focusCheck: FocusCheck {
+        FocusCheck(eventId: home.focusEventId, feedFamilyId: feed?.familyId, feedPhase: feed?.phase)
+    }
+
+    /// Once the selected family's feed has loaded, takes the focus event,
+    /// reloads the feed if the event is newer than it, then scrolls to the
+    /// event and highlights it. An event that isn't there leaves the family
+    /// showing as it is.
+    func showFocusedEvent(_ proxy: ScrollViewProxy) {
+        guard home.focusEventId != nil, let feed, feed.familyId == home.selectedFamilyId,
+              feed.phase != .loading, let eventId = home.takeFocus() else { return }
+        focusTask?.cancel()
+        focusTask = Task {
+            /// Still the latest tap, and the feed on screen is still this one.
+            @MainActor func current() -> Bool {
+                !Task.isCancelled && self.feed === feed && home.selectedFamilyId == feed.familyId
+            }
+            if !feed.events.contains(where: { $0.id == eventId }) {
+                // Its own task, so cancelling this focus never fails the reload.
+                await Task { await feed.load() }.value
+                guard current() else { return }
+            }
+            guard feed.events.contains(where: { $0.id == eventId }) else { return }
+            // Let the rows lay out before scrolling to one.
+            try? await Task.sleep(for: .milliseconds(150))
+            guard current() else { return }
+            withAnimation { proxy.scrollTo(eventId, anchor: .center) }
+            highlightedEventId = eventId
         }
     }
 }
@@ -443,6 +498,7 @@ struct StatusEntry: View {
 
 struct FeedCard: View {
     let model: FeedModel
+    var highlightedEventId: String?
 
     var body: some View {
         Card {
@@ -450,7 +506,7 @@ struct FeedCard: View {
                 Text("Family moments")
                     .font(.title3.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
-                FeedList(model: model)
+                FeedList(model: model, highlightedEventId: highlightedEventId)
                     .id(model.familyId)
             }
         }

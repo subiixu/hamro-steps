@@ -41,8 +41,7 @@ struct ConvexActivityService: ActivityService {
     // MARK: Feed and reactions
 
     func feed(familyId: String) async throws -> [FeedEvent] {
-        let rows: [WireFeedEvent] = try await query("feed:feed", ["familyId": .string(familyId)])
-        return rows.map(\.event)
+        try await query("feed:feed", ["familyId": .string(familyId)])
     }
 
     func react(eventId: String, emoji: Reaction) async throws {
@@ -175,46 +174,5 @@ struct ConvexActivityService: ActivityService {
             }
             running?.cancel()
         }
-    }
-}
-
-/// One `feed` row. The backend sends `actor.name: null` for someone who
-/// hasn't given a name yet, which `FeedActor` can't hold, so it becomes ""
-/// the way `familyToday` members do. The rest decodes as `FeedEvent` does.
-private struct WireFeedEvent: Decodable, Sendable {
-    let event: FeedEvent
-
-    private enum Keys: String, CodingKey {
-        case id, type, actor, day, createdAt, data, reactions, myReaction
-    }
-
-    private struct Actor: Decodable {
-        var userId: String
-        var name: String?
-        var avatarColor: String
-    }
-
-    private struct Count: Decodable {
-        var emoji: String
-        var count: Int
-    }
-
-    init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        let actor = try c.decodeIfPresent(Actor.self, forKey: .actor)
-        let counts = try c.decodeIfPresent([Count].self, forKey: .reactions) ?? []
-        event = FeedEvent(
-            id: try c.decode(String.self, forKey: .id),
-            type: try c.decode(FeedEventType.self, forKey: .type),
-            actor: actor.map { FeedActor(userId: $0.userId, name: $0.name ?? "", avatarColor: $0.avatarColor) },
-            day: try c.decode(String.self, forKey: .day),
-            createdAt: try c.decode(EpochMillis.self, forKey: .createdAt),
-            data: try? c.decodeIfPresent(FeedEventData.self, forKey: .data),
-            // Emoji outside the fixed set are dropped rather than failing the feed.
-            reactions: counts.compactMap { item in
-                Reaction(emoji: item.emoji).map { ReactionCount(emoji: $0, count: item.count) }
-            },
-            myReaction: try c.decodeIfPresent(String.self, forKey: .myReaction).flatMap(Reaction.init(emoji:))
-        )
     }
 }

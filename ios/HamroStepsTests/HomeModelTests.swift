@@ -24,6 +24,20 @@ struct HomeModelTests {
         try JSONDecoder().decode(FamilyToday.self, from: Data(Self.json.utf8))
     }
 
+    @Test func focusEventIsHandedOutOnce() {
+        let home = HomeModel(service: MockFamilyService.sample(signedIn: true), defaults: TestTime.defaults())
+        #expect(home.takeFocus() == nil)
+        home.focus(eventId: "e_1")
+        #expect(home.focusEventId == "e_1")
+        #expect(home.takeFocus() == "e_1")
+        #expect(home.focusEventId == nil)
+        #expect(home.takeFocus() == nil)
+        // A newer tap replaces one not yet shown.
+        home.focus(eventId: "e_2")
+        home.focus(eventId: "e_3")
+        #expect(home.takeFocus() == "e_3")
+    }
+
     @Test func fixedOrderByPositionNeverBySteps() async throws {
         let today = try decoded()
         let home = HomeModel(service: StubFamilyService(today: ["f1": today]), defaults: TestTime.defaults())
