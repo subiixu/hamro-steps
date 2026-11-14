@@ -17,7 +17,6 @@ Jarvis-only rules live in `handoffs/JARVIS.md`.
 
 ## Checks
 
-`ultron check` runs them: the `checks:` list in `.ultron/project.yaml`
-(TODO: Jarvis must set the build, lint and test commands.).
+`ultron check` runs them: the `checks:` list in `.ultron/project.yaml` (`scripts/check-ios.sh`: XcodeGen + xcodebuild test on the iPhone 17 Pro simulator; `scripts/check-db.sh`: local Supabase db reset + pgTAP `supabase test db`).
 
 If the tooling changes, update that list, this line and the same one in `AGENTS.md`.

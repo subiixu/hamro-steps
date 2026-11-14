@@ -3,6 +3,10 @@
   "id": "p_hamro-steps",
   "name": "Hamro Steps",
   "permissions": "auto",
-  "stack": "Jarvis will help choose the stack",
-  "stage": "idea"
+  "stack": "Swift, SwiftUI, HealthKit, WidgetKit, XcodeGen, Supabase (Postgres, Auth, RLS, Edge Functions), APNs",
+  "stage": "idea",
+  "checks": [
+    "scripts/check-ios.sh",
+    "scripts/check-db.sh"
+  ]
 }
