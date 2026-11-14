@@ -1,11 +1,22 @@
 import SwiftUI
 
-/// Home (PRD F6–F8): the family's progress today, who added what (fixed
-/// order, never ranked), and which days this week the family hit the goal.
+/// Home (PRD F6–F14): the family's progress today, the walk button, who
+/// added what (fixed order, never ranked) with who's walking and their
+/// status, which days this week the family hit the goal, and the feed.
 struct HomeView: View {
     @Environment(HomeModel.self) private var home
     @Environment(SessionStore.self) private var session
     @Environment(StepSync.self) private var stepSync
+    @Environment(\.activityService) private var activity
+    @Environment(\.now) private var now
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var walk: WalkController?
+    @State private var feed: FeedModel?
+    @State private var showStatusPicker = false
+    /// The status just saved or cleared here, shown until `familyToday`
+    /// catches up. `.some(nil)` means cleared.
+    @State private var savedStatus: MemberStatus??
 
     @State private var showSettings = AppLaunch.screen == .settings
     @State private var showAddFamily = false
@@ -29,11 +40,34 @@ struct HomeView: View {
             .refreshable {
                 await stepSync.sync()
                 await home.reload()
+                await feed?.load()
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
         }
         .task(id: home.selectedFamilyId) {
             await home.listen()
+        }
+        .task(id: home.selectedFamilyId) {
+            if walk == nil { walk = WalkController(service: activity) }
+            if let familyId = home.selectedFamilyId, feed?.familyId != familyId {
+                feed = FeedModel(service: activity, familyId: familyId, viewerId: session.user?.id)
+            }
+        }
+        .onChange(of: viewer?.walkingSince, initial: true) { syncWalk() }
+        .onChange(of: viewer?.walkEndsAt) { syncWalk() }
+        .onChange(of: viewer?.status) { savedStatus = nil }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { walk?.expireStaleNotice() }
+        }
+        .sheet(isPresented: $showStatusPicker) {
+            StatusPicker(current: myStatus) { input in
+                try await activity.setStatus(input)
+                let expiry = input.expiresAt ?? ActivityTime.millis(now().addingTimeInterval(StatusInput.defaultDuration))
+                savedStatus = .some(MemberStatus(preset: input.preset, text: input.text, expiresAt: expiry))
+            } onClear: {
+                try await activity.clearStatus()
+                savedStatus = .some(nil)
+            }
         }
         .sheet(isPresented: $showSettings) {
             FamilySettingsView()
@@ -109,6 +143,31 @@ struct HomeView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    // MARK: Activity
+
+    /// The signed-in member's row in today's family.
+    private var viewer: FamilyMember? {
+        home.members.first { $0.userId == session.user?.id }
+    }
+
+    private var myStatus: MemberStatus? {
+        savedStatus ?? viewer?.status
+    }
+
+    private func syncWalk() {
+        walk?.sync(walkingSince: viewer?.walkingSince, walkEndsAt: viewer?.walkEndsAt)
+    }
+
+    /// Members with the viewer's status as just saved here.
+    private var members: [FamilyMember] {
+        guard let savedStatus else { return home.members }
+        return home.members.map { member in
+            var member = member
+            if member.userId == session.user?.id { member.status = savedStatus }
+            return member
+        }
+    }
+
     // MARK: Content
 
     @ViewBuilder
@@ -123,9 +182,16 @@ struct HomeView: View {
         default:
             ProgressCard(total: home.total, goal: home.goal, percent: home.percent, fraction: home.ringFraction, reached: home.isGoalReached)
             SyncStatusRow(lastSyncedAt: stepSync.lastSyncedAt, isSyncing: stepSync.isSyncing)
-            ContributionsCard(members: home.members, currentUserId: session.user?.id)
+            if let walk {
+                WalkButton(controller: walk)
+            }
+            StatusEntry(status: myStatus) { showStatusPicker = true }
+            ContributionsCard(members: members, currentUserId: session.user?.id)
             if !home.week.isEmpty {
                 WeekCard(days: home.week, today: home.today?.day)
+            }
+            if let feed {
+                FeedCard(model: feed)
             }
         }
     }
@@ -252,8 +318,17 @@ struct SyncStatusRow: View {
 struct ContributionsCard: View {
     let members: [FamilyMember]
     let currentUserId: String?
+    @Environment(\.now) private var now
 
     var body: some View {
+        // Ticks so a walk or status drops off when it ends, without waiting
+        // for the next refresh.
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            card(now: now())
+        }
+    }
+
+    private func card(now: Date) -> some View {
         Card {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Everyone's steps today")
@@ -261,7 +336,7 @@ struct ContributionsCard: View {
                     .padding(.bottom, 8)
                 ForEach(Array(members.enumerated()), id: \.element.id) { index, member in
                     if index > 0 { Divider().padding(.leading, 64) }
-                    MemberRow(member: member, isYou: member.userId == currentUserId)
+                    MemberRow(member: member, isYou: member.userId == currentUserId, now: now)
                 }
             }
         }
@@ -271,6 +346,7 @@ struct ContributionsCard: View {
 struct MemberRow: View {
     let member: FamilyMember
     let isYou: Bool
+    var now: Date = .now
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -292,6 +368,10 @@ struct MemberRow: View {
                         .font(.footnote)
                         .foregroundStyle(.secondaryText)
                     }
+                    if let walk = member.activeWalk, !walk.isOver(at: now) {
+                        WalkingBadge()
+                    }
+                    StatusLabel(status: member.status, now: now)
                 }
             }
             if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
@@ -314,6 +394,65 @@ struct MemberRow: View {
                 .font(.body)
                 .foregroundStyle(.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - Status entry
+
+/// "Set my status" on Home, or the viewer's current status with a way to
+/// change it. Opens the status picker.
+struct StatusEntry: View {
+    let status: MemberStatus?
+    let action: () -> Void
+    @Environment(\.now) private var now
+
+    var body: some View {
+        let active = status.flatMap { $0.isActive(at: now()) ? $0 : nil }
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ((active?.preset?.icon) ?? (active == nil ? .edit : .statusCustom)).size(20)
+                    .foregroundStyle(.accentText)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let text = active?.displayText {
+                        Text("Your status").font(.footnote).foregroundStyle(.secondaryText)
+                        Text(text).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                    } else {
+                        Text("Set my status").font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        Text("Let your family know what you're up to.")
+                            .font(.footnote).foregroundStyle(.secondaryText)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Icon.chevronRight.size(16).foregroundStyle(.secondaryText)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.surface, in: .rect(cornerRadius: 24))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(active?.displayText.map { Text("Your status: \($0)") } ?? Text("Set my status"))
+        .accessibilityHint(Text("Choose what your family sees next to your name."))
+    }
+}
+
+// MARK: - Family moments
+
+struct FeedCard: View {
+    let model: FeedModel
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Family moments")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                FeedList(model: model)
+                    .id(model.familyId)
+            }
         }
     }
 }

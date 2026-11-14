@@ -13,6 +13,8 @@ struct HamroStepsApp: App {
                 .environment(delegate.home)
                 .environment(\.familyService, delegate.services.family)
                 .environment(\.authService, delegate.services.auth)
+                .environment(\.activityService, delegate.services.activity)
+                .environment(\.now, delegate.services.now)
                 .tint(.accent)
         }
     }
@@ -29,7 +31,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let home = home
-        stepSync.onSynced = { await home.reload() }
+        stepSync.onSynced = { await home.syncFinished() }
         if let healthKit = services.steps as? HealthKitStepSource {
             let sync = stepSync
             healthKit.startBackgroundDelivery { done in
@@ -44,11 +46,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 /// The services the app runs on. This phase always uses the in-memory mocks;
-/// the Convex phase swaps `family` and `auth` here and nowhere else.
+/// the Convex phase swaps `family`, `auth` and `activity` here and nowhere else.
 struct AppServices {
     let family: any FamilyService
     let auth: any AuthService
     let steps: any StepSource
+    let activity: any ActivityService
+    /// The one clock for walk timers and status expiry, shared by the mocks
+    /// and the views, so sample walks and screenshots agree.
+    let now: @Sendable () -> Date
+}
+
+extension EnvironmentValues {
+    @Entry var activityService: any ActivityService = MockActivityService()
+    /// The current time; read it instead of `Date.now` in activity views.
+    @Entry var now: @Sendable () -> Date = { .now }
 }
 
 /// Debug-only launch arguments for the simulator and screenshots:
@@ -82,11 +94,14 @@ enum AppLaunch {
             defaults.removeObject(forKey: "home.selectedFamilyId")
         }
         #endif
-        let family = MockFamilyService.sample(signedIn: signedIn, newUser: newUser, delay: .milliseconds(350))
+        let now: @Sendable () -> Date = { .now }
+        let family = MockFamilyService.sample(signedIn: signedIn, newUser: newUser, delay: .milliseconds(350), now: now)
         return AppServices(
             family: family,
             auth: MockAuthService(backend: family, defaults: defaults),
-            steps: stepSource()
+            steps: stepSource(),
+            activity: SampleFamilyActivity(MockActivityService(now: now, latency: .milliseconds(350))),
+            now: now
         )
     }
 
@@ -108,4 +123,27 @@ enum AppLaunch {
         #endif
         return nil
     }
+}
+
+/// Temporary, until the mock activity service knows the mock families: the
+/// mock only answers for its own sample family, so every family's feed reads
+/// from that one. Goes when Convex lands.
+struct SampleFamilyActivity: ActivityService {
+    let base: MockActivityService
+    init(_ base: MockActivityService) { self.base = base }
+
+    func startWalk() async throws -> WalkStart { try await base.startWalk() }
+    func stopWalk() async throws { try await base.stopWalk() }
+    func setStatus(_ input: StatusInput) async throws { try await base.setStatus(input) }
+    func clearStatus() async throws { try await base.clearStatus() }
+    func feed(familyId: String) async throws -> [FeedEvent] {
+        try await base.feed(familyId: MockActivityService.familyId)
+    }
+    func react(eventId: String, emoji: Reaction) async throws { try await base.react(eventId: eventId, emoji: emoji) }
+    func notificationPrefs() async throws -> NotificationPrefs { try await base.notificationPrefs() }
+    func setNotificationPrefs(_ patch: NotificationPrefsPatch) async throws { try await base.setNotificationPrefs(patch) }
+    func registerDevice(apnsToken: String, environment: APNsEnvironment) async throws {
+        try await base.registerDevice(apnsToken: apnsToken, environment: environment)
+    }
+    func unregisterDevice(apnsToken: String) async throws { try await base.unregisterDevice(apnsToken: apnsToken) }
 }

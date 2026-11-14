@@ -16,6 +16,9 @@ actor MockFamilyService: FamilyService {
         var name: String?
         var avatarColor: String
         var timezone: String?
+        var walkingSince: EpochMillis? = nil
+        var walkEndsAt: EpochMillis? = nil
+        var status: MemberStatus? = nil
     }
 
     fileprivate struct StoredFamily {
@@ -118,6 +121,11 @@ actor MockFamilyService: FamilyService {
 
     func signOut() {
         signedInUserId = nil
+    }
+
+    /// Tests only: act as another seeded member (the real app has one user).
+    func actAs(_ userId: String) {
+        signedInUserId = userId
     }
 
     // MARK: FamilyService
@@ -386,11 +394,16 @@ actor MockFamilyService: FamilyService {
         }
     }
 
-    /// Leaving or being removed: the organiser role passes to the
-    /// earliest-joined remaining member, and an empty family is deleted.
+    /// Leaving or being removed: the user's closed-day contributions go
+    /// (goals stay frozen, and later syncs no longer reach this family), the
+    /// organiser role passes to the earliest-joined remaining member, and an
+    /// empty family is deleted.
     private func drop(_ userId: String, from familyId: String) {
         guard var family = families[familyId] else { return }
         family.memberIds.removeAll { $0 == userId }
+        for day in family.closedDays.keys {
+            family.closedDays[day]?.contributions[userId] = nil
+        }
         if family.memberIds.isEmpty {
             families[familyId] = nil
             familyOrder.removeAll { $0 == familyId }
@@ -418,7 +431,9 @@ actor MockFamilyService: FamilyService {
             guard let user = users[id] else { return nil }
             return FamilyMember(
                 userId: id, name: user.name ?? "", avatarColor: user.avatarColor, position: index,
-                isOrganiser: id == family.organiserId, steps: steps[id]?[day], lastSyncedAt: lastSyncedAt[id]
+                isOrganiser: id == family.organiserId, steps: steps[id]?[day], lastSyncedAt: lastSyncedAt[id],
+                walkingSince: user.walkingSince, walkEndsAt: user.walkEndsAt,
+                status: user.status.flatMap { $0.isActive(at: now()) ? $0 : nil }
             )
         }
         let percent = goal > 0 ? Int((Double(total) / Double(goal) * 100).rounded(.down)) : 0
@@ -486,6 +501,18 @@ extension MockFamilyService {
         for (id, name, color) in people {
             seed.users[id] = StoredUser(name: name, avatarColor: color, timezone: id == me ? "Australia/Sydney" : "Asia/Kathmandu")
         }
+
+        // Who's out walking and members' statuses, relative to `now` so the
+        // walk timers read the same in every screenshot.
+        let millis = { (offset: TimeInterval) in ActivityTime.millis(date.addingTimeInterval(offset)) }
+        seed.users["u_aama"]?.walkingSince = millis(-12 * 60)
+        seed.users["u_aama"]?.walkEndsAt = millis(108 * 60)
+        seed.users["u_sunita"]?.walkingSince = millis(-34 * 60)
+        seed.users["u_sunita"]?.walkEndsAt = millis(86 * 60)
+        seed.users["u_aama"]?.status = MemberStatus(preset: .atHome, expiresAt: millis(4 * 3600))
+        seed.users["u_buwa"]?.status = MemberStatus(preset: .atWork, expiresAt: millis(5 * 3600))
+        seed.users["u_sunita"]?.status = MemberStatus(text: "Visiting Pokhara", expiresAt: millis(20 * 3600))
+        seed.users["u_rohan"]?.status = MemberStatus(preset: .onAHike, expiresAt: millis(3 * 3600))
 
         // Today's steps. Bikash has never synced, so he has no row at all.
         let todaySteps = [me: 5_240, "u_aama": 8_105, "u_buwa": 3_980, "u_sunita": 12_210, "u_rohan": 9_400, "u_anju": 6_050]

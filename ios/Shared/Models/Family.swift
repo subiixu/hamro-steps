@@ -61,14 +61,26 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
     var steps: Int?
     /// Milliseconds since 1970, as Convex sends it.
     var lastSyncedAt: Double?
+    /// Milliseconds since 1970; set while the member is out on a walk.
+    var walkingSince: EpochMillis?
+    /// When the server closes the walk; `nil` while not walking.
+    var walkEndsAt: EpochMillis?
+    /// The member's status; the server sends `nil` once it has expired.
+    var status: MemberStatus?
 
     var id: String { userId }
+
+    /// The walk in progress, or `nil` when not walking.
+    var activeWalk: ActiveWalk? {
+        ActiveWalk(walkingSince: walkingSince, walkEndsAt: walkEndsAt)
+    }
 
     var lastSynced: Date? {
         lastSyncedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 
-    init(userId: String, name: String, avatarColor: String, position: Int, isOrganiser: Bool, steps: Int?, lastSyncedAt: Double?) {
+    init(userId: String, name: String, avatarColor: String, position: Int, isOrganiser: Bool, steps: Int?, lastSyncedAt: Double?,
+         walkingSince: EpochMillis? = nil, walkEndsAt: EpochMillis? = nil, status: MemberStatus? = nil) {
         self.userId = userId
         self.name = name
         self.avatarColor = avatarColor
@@ -76,10 +88,14 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
         self.isOrganiser = isOrganiser
         self.steps = steps
         self.lastSyncedAt = lastSyncedAt
+        self.walkingSince = walkingSince
+        self.walkEndsAt = walkEndsAt
+        self.status = status
     }
 
     private enum CodingKeys: String, CodingKey {
         case userId, name, avatarColor, position, isOrganiser, steps, lastSyncedAt
+        case walkingSince, walkEndsAt, status
     }
 
     init(from decoder: any Decoder) throws {
@@ -91,6 +107,9 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
         isOrganiser = try c.decode(Bool.self, forKey: .isOrganiser)
         steps = try c.decodeIfPresent(Int.self, forKey: .steps)
         lastSyncedAt = try c.decodeIfPresent(Double.self, forKey: .lastSyncedAt)
+        walkingSince = try c.decodeIfPresent(EpochMillis.self, forKey: .walkingSince)
+        walkEndsAt = try c.decodeIfPresent(EpochMillis.self, forKey: .walkEndsAt)
+        status = try c.decodeIfPresent(MemberStatus.self, forKey: .status)
     }
 }
 
@@ -234,5 +253,15 @@ enum FamilyRules {
 
     static func isValidName(_ name: String) -> Bool {
         nameLength.contains(cleanName(name).count)
+    }
+}
+
+// `FamilyMember` is Hashable and carries a status. Written out by hand
+// because Swift only synthesises it in the file that declares the type.
+extension MemberStatus: Hashable {
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(preset)
+        hasher.combine(text)
+        hasher.combine(expiresAt)
     }
 }

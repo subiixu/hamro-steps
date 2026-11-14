@@ -20,7 +20,7 @@ enum Icon: String, CaseIterable, Sendable {
     case copy = "icon-copy"                  // copy-01
     case refresh = "icon-refresh"            // refresh-01: new invite code
     case health = "icon-health"              // health: Apple Health
-    case clock = "icon-clock"                // clock-01: last synced
+    case clock = "icon-clock"                // clock-01: last synced, walk timer, expiry
     case tick = "icon-tick"                  // tick-02: goal hit, selected family
     case celebrate = "icon-celebrate"        // party: goal reached
     case organiser = "icon-organiser"        // crown-02: subtle organiser mark
@@ -33,7 +33,6 @@ enum Icon: String, CaseIterable, Sendable {
     // Activity: walks, status, feed, notifications
     case walking = "icon-walking"            // walking: "I'm walking", badge
     case stop = "icon-stop"                  // stop: "Stop walk"
-    case clock = "icon-clock"                // clock-01: walk timer, expiry
     case notification = "icon-notification"  // notification-01
     case check = "icon-check"                // tick-02: selected option
     case clear = "icon-clear"                // cancel-01: clear status

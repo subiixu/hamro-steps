@@ -38,6 +38,14 @@ struct MeView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        NotificationsScreen()
+                    } label: {
+                        Label { Text("Notifications") } icon: { Icon.notification.image }
+                    }
+                }
+
+                Section {
                     Button {
                         confirmSignOut = true
                     } label: {
@@ -193,6 +201,25 @@ struct DeleteAccountView: View {
                 message = String(localized: "Your account wasn't deleted. Please try again in a moment.")
             }
             isDeleting = false
+        }
+    }
+}
+
+/// Me › Notifications: owns the settings model for as long as it's shown.
+private struct NotificationsScreen: View {
+    @Environment(\.activityService) private var activity
+    @State private var model: NotificationSettingsModel?
+
+    var body: some View {
+        Group {
+            if let model {
+                NotificationSettingsView(model: model)
+            } else {
+                Color.clear
+            }
+        }
+        .onAppear {
+            if model == nil { model = NotificationSettingsModel(service: activity) }
         }
     }
 }
