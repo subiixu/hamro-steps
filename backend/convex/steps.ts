@@ -6,12 +6,15 @@ import { fail } from "./lib/errors";
 import { MAX_DAILY_STEPS } from "./lib/constants";
 import { isValidDay, nepalDay, oldestSyncableDay } from "./lib/nepalDay";
 import { recomputeSnapshot, stepsRow } from "./lib/totals";
+import { postTodayStepEvents } from "./lib/feed";
 
 /**
  * The app sends Nepal-day step totals (today plus up to the previous 6).
  * Each value replaces what was stored. Days already closed by the midnight
  * cron update the user's contribution and that family's snapshot total
  * (goal stays frozen), so a late sync can turn a closed day into a hit.
+ * Today's value posts feed events when it crosses a milestone (contract F13);
+ * late syncs for closed days never do.
  */
 export const syncSteps = mutation({
   args: { days: v.array(v.object({ day: v.string(), steps: v.number() })) },
@@ -33,12 +36,14 @@ export const syncSteps = mutation({
 
     for (const [day, steps] of byDay) {
       const row = await stepsRow(ctx, user._id, day);
+      const before = row?.steps ?? 0;
       if (row) {
         await ctx.db.patch(row._id, { steps, updatedAt: now });
       } else {
         await ctx.db.insert("dailySteps", { userId: user._id, day, steps, updatedAt: now });
       }
       if (day < today) await applyLateSync(ctx, user._id, day, steps);
+      else await postTodayStepEvents(ctx, user._id, today, before, steps, now);
     }
     await ctx.db.patch(user._id, { lastSyncedAt: now });
     return { lastSyncedAt: now, today };
@@ -59,6 +64,6 @@ async function applyLateSync(ctx: MutationCtx, userId: Id<"users">, day: string,
     if (c.steps === steps) continue;
     await ctx.db.patch(c._id, { steps });
     await recomputeSnapshot(ctx, c.familyId, day);
-    // Phase 2: if `hit` just flipped to true, post the "family hit the goal" event.
+    // No feed event here: milestones and goal events are for today only (contract F13).
   }
 }

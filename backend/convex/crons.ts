@@ -11,5 +11,6 @@ crons.daily("purge expired refresh tokens", { hourUTC: 19, minuteUTC: 0 }, inter
 
 // Queued Apple revokes whose scheduled retry was lost get rescheduled.
 crons.hourly("recover Apple revokes", { minuteUTC: 30 }, internal.users.recoverAppleRevocations, {});
+crons.daily("purge old feed events", { hourUTC: 19, minuteUTC: 30 }, internal.feed.purgeOld, {});
 
 export default crons;

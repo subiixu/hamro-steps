@@ -2,6 +2,7 @@ import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { familyMembers } from "./access";
 import { recomputeSnapshot } from "./totals";
+import { deleteFamilyFeed, deleteMemberFeed, deleteUserFeed } from "./feed";
 
 /**
  * Removes one membership and everything that member shared in that family:
@@ -9,7 +10,8 @@ import { recomputeSnapshot } from "./totals";
  * recomputed; the goal stays frozen). Their dailySteps rows are per user, so
  * they simply stop counting toward this family's today.
  * Walks and status are per user, not per family, so nothing to do for them.
- * Phase 2: delete their feed events and reactions in this family here.
+ * Their feed events in this family (with others' reactions to them) and their
+ * reactions to this family's events are deleted too.
  *
  * If they were the organiser, the earliest-joined remaining member (lowest
  * position) takes over. If nobody is left, the family is deleted.
@@ -19,6 +21,7 @@ export async function removeMembership(ctx: MutationCtx, membership: Doc<"member
   await ctx.db.delete(membership._id);
   if (!family) return;
 
+  await deleteMemberFeed(ctx, membership.userId, family._id);
   const remaining = await familyMembers(ctx, family._id);
   const next = remaining[0];
   if (!next) {
@@ -52,7 +55,7 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
     .withIndex("by_family_day", (q) => q.eq("familyId", familyId))
     .collect();
   for (const c of contributions) await ctx.db.delete(c._id);
-  // Phase 2: delete the family's feed events and reactions here.
+  await deleteFamilyFeed(ctx, familyId);
   await ctx.db.delete(familyId);
 }
 
@@ -61,7 +64,8 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
  * hand-off, and their closed-day contributions), steps, sessions, refresh tokens, Apple token. Returns Apple's
  * refresh token, if one was stored, so the caller can revoke it.
  * Also their walks (a pending autoStop then finds nothing) and status.
- * Phase 2: also delete their devices, mutes and reactions.
+ * Also every feed event they posted and every reaction they made.
+ * Phase 2c: also delete their devices and mutes.
  */
 export async function deleteUserData(
   ctx: MutationCtx,
@@ -81,6 +85,8 @@ export async function deleteUserData(
     await ctx.db.delete(row._id);
     await recomputeSnapshot(ctx, row.familyId, row.day);
   }
+
+  await deleteUserFeed(ctx, userId);
 
   for await (const row of ctx.db
     .query("dailySteps")

@@ -61,3 +61,17 @@ export type StatusPreset = (typeof STATUS_PRESETS)[number];
 export const MAX_STATUS_TEXT_LENGTH = 30;
 export const DEFAULT_STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Feed (contract F13): how many Nepal days `feed` shows, and its cap. */
+export const FEED_WINDOW_DAYS = 3;
+export const FEED_MAX_EVENTS = 100;
+/** Feed events older than this are purged daily. */
+export const FEED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const MEMBER_STEP_MILESTONES = [
+  { steps: 5_000, type: "member_5k" },
+  { steps: 10_000, type: "member_10k" },
+] as const;
+
+/** Reactions (contract F14), in the fixed order `feed` reports them. */
+export const REACTION_EMOJI = ["👏", "❤️", "🙌", "🔥", "😄"] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJI)[number];

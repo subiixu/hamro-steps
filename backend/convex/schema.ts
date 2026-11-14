@@ -153,4 +153,38 @@ export default defineSchema({
     expiresAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  /**
+   * Family feed (contract F13). At most one row per (family, day, type, actor),
+   * enforced by checking `by_family_day_type_actor` before inserting.
+   * `actorId` is unset for family_50 / family_100. Purged after 7 days.
+   */
+  feedEvents: defineTable({
+    familyId: v.id("families"),
+    type: v.union(
+      v.literal("member_5k"),
+      v.literal("member_10k"),
+      v.literal("family_50"),
+      v.literal("family_100"),
+      v.literal("walk_started"),
+    ),
+    actorId: v.optional(v.id("users")),
+    day: v.string(),
+    createdAt: v.number(),
+    data: v.object({ walkId: v.optional(v.id("walks")) }),
+  })
+    .index("by_family_day_type_actor", ["familyId", "day", "type", "actorId"])
+    .index("by_family_created", ["familyId", "createdAt"])
+    .index("by_actor_family", ["actorId", "familyId"])
+    .index("by_createdAt", ["createdAt"]),
+
+  /** Reactions (contract F14): at most one per (event, user). */
+  reactions: defineTable({
+    eventId: v.id("feedEvents"),
+    userId: v.id("users"),
+    emoji: v.string(),
+  })
+    .index("by_event", ["eventId"])
+    .index("by_event_user", ["eventId", "userId"])
+    .index("by_user", ["userId"]),
 });

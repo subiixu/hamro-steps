@@ -16,7 +16,8 @@ export type ErrorCode =
   | "already_walking"
   | "walk_limit_reached"
   | "invalid_status"
-  | "invalid_expiry";
+  | "invalid_expiry"
+  | "invalid_emoji";
 
 export function fail(code: ErrorCode, message?: string): never {
   throw new ConvexError({ code, ...(message ? { message } : {}) });
