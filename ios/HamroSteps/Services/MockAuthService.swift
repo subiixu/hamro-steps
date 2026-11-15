@@ -38,6 +38,30 @@ actor MockAuthService: AuthService {
         try await backend.updateMyName(name)
     }
 
+    func updateProfile(_ profile: ProfileUpdate) async throws -> AppUser {
+        try await backend.updateMyProfile(profile)
+    }
+
+    func setPhoto(jpeg: Data, userId: String) async throws -> AppUser {
+        try await requireSignedIn(userId)
+        return try await backend.setMyPhoto(jpeg: jpeg)
+    }
+
+    func removePhoto(userId: String) async throws -> AppUser {
+        try await requireSignedIn(userId)
+        return try await backend.removeMyPhoto()
+    }
+
+    /// Mirrors the server's `not_authorized` check, as a cancellation.
+    private func requireSignedIn(_ userId: String) async throws {
+        guard let signedIn = await backend.currentUser else { throw FamilyServiceError.notAuthenticated }
+        guard signedIn.id == userId else { throw CancellationError() }
+    }
+
+    func updateTimeZone(_ identifier: String) async throws {
+        try await backend.updateMyTimeZone(identifier)
+    }
+
     func signOut() async {
         await backend.signOut()
         defaults?.set(false, forKey: Self.signedInKey)

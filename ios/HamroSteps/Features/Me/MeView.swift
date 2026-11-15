@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The person's own page: name, Apple Health, sign out, delete account.
+/// The person's own page: their profile, Apple Health, sign out, delete
+/// account.
 struct MeView: View {
     @Environment(SessionStore.self) private var session
     @Environment(StepSync.self) private var stepSync
@@ -73,14 +74,40 @@ struct MeView: View {
     }
 
     private var profileTile: some View {
-        HStack(spacing: 16) {
-            Avatar(name: session.user?.displayName ?? "", hex: session.user?.avatarColor ?? "", size: 64)
-            Text(session.user?.displayName ?? "")
-                .font(.title2.bold())
-                .fixedSize(horizontal: false, vertical: true)
+        let user = session.user
+        let birthday = user?.birthday.flatMap { ProfileFormat.birthday($0) }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 16) {
+                Avatar(name: user?.displayName ?? "", photoUrl: user?.photoUrl, size: 64)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user?.displayName ?? "")
+                        .font(.title2.bold())
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let city = user?.city, !city.isEmpty {
+                        Label { Text(city) } icon: { Icon.location.size(16) }
+                            .font(.subheadline)
+                            .foregroundStyle(.secondaryText)
+                    }
+                    if let birthday {
+                        Label { Text("Birthday \(birthday)") } icon: { Icon.birthday.size(16) }
+                            .font(.subheadline)
+                            .foregroundStyle(.secondaryText)
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 16)
+            .accessibilityElement(children: .combine)
+            TileDivider()
+            NavigationLink {
+                ProfileEditView(user: session.user)
+            } label: {
+                TileRow(icon: .edit, title: "Edit profile")
+            }
+            .buttonStyle(.plain)
         }
-        .padding(Bento.padding)
+        .padding(.horizontal, Bento.padding)
+        .padding(.vertical, 4)
         .bentoSurface()
     }
 
@@ -192,7 +219,7 @@ struct DeleteAccountView: View {
                     Text("This removes everything Hamro Steps has about you:")
                         .font(.body.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
-                    item("Your name and sign-in")
+                    item("Your name, photo and sign-in")
                     item("Your step totals")
                     item("Your place in every family you're in")
                 }

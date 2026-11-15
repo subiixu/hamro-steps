@@ -13,6 +13,7 @@ struct FamilySettingsView: View {
     @State private var message: String?
     @State private var confirmRegenerate = false
     @State private var memberToRemove: FamilyMember?
+    @State private var shownMember: FamilyMember?
     @State private var confirmLeave = false
 
     private var family: FamilySummary? { home.today?.family }
@@ -115,6 +116,9 @@ struct FamilySettingsView: View {
                 }
             }
         }
+        .sheet(item: $shownMember) { member in
+            MemberProfileView(member: member, isYou: member.userId == session.user?.id)
+        }
         .confirmationDialog(
             Text("Remove \(memberToRemove?.name ?? "")?"),
             isPresented: Binding(get: { memberToRemove != nil }, set: { if !$0 { memberToRemove = nil } }),
@@ -135,19 +139,26 @@ struct FamilySettingsView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
             : AnyLayout(HStackLayout(spacing: 14))
         return layout {
-            HStack(spacing: 14) {
-                Avatar(name: member.name, hex: member.avatarColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(member.userId == session.user?.id ? String(localized: "\(member.name) (you)") : member.name)
-                        .font(.body.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if member.isOrganiser {
-                        Text("Organiser").font(.footnote).foregroundStyle(.secondaryText)
+            Button {
+                shownMember = member
+            } label: {
+                HStack(spacing: 14) {
+                    Avatar(name: member.name, photoUrl: member.photoUrl)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(member.userId == session.user?.id ? String(localized: "\(member.name) (you)") : member.name)
+                            .font(.body.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if member.isOrganiser {
+                            Text("Organiser").font(.footnote).foregroundStyle(.secondaryText)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
             }
+            .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
+            .accessibilityHint(Text("Shows their profile"))
             if canRemove {
                 Button {
                     memberToRemove = member

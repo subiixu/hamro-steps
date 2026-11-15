@@ -7,11 +7,11 @@ import Foundation
 actor MockActivityService: ActivityService {
     static let familyId = "family-sharma"
 
-    static let me = FeedActor(userId: "user-anish", name: "Anish", avatarColor: "#2E86AB")
-    static let mum = FeedActor(userId: "user-mum", name: "Mum", avatarColor: "#D45D79")
-    static let dad = FeedActor(userId: "user-dad", name: "Dad", avatarColor: "#8C5E58")
-    static let ram = FeedActor(userId: "user-ram", name: "Ram", avatarColor: "#3BB273")
-    static let priya = FeedActor(userId: "user-priya", name: "Priya", avatarColor: "#7768AE")
+    static let me = FeedActor(userId: "user-anish", name: "Anish")
+    static let mum = FeedActor(userId: "user-mum", name: "Mum")
+    static let dad = FeedActor(userId: "user-dad", name: "Dad")
+    static let ram = FeedActor(userId: "user-ram", name: "Ram")
+    static let priya = FeedActor(userId: "user-priya", name: "Priya")
 
     private let now: @Sendable () -> Date
     private let latency: Duration

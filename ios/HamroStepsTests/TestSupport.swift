@@ -72,8 +72,16 @@ actor StubFamilyService: FamilyService {
 actor StubAuthService: AuthService {
     private(set) var calls: [String] = []
     var user: AppUser?
+    /// When set, `setPhoto` waits here before answering.
+    private let photoGate: TestGate?
 
-    init(user: AppUser?) { self.user = user }
+    init(user: AppUser?, photoGate: TestGate? = nil) {
+        self.user = user
+        self.photoGate = photoGate
+    }
+
+    /// Who the next sign-in returns.
+    func setUser(_ user: AppUser?) { self.user = user }
 
     var currentUser: AppUser? { get async { user } }
     func signInWithApple(identityToken: String, authorizationCode: String, fullName: PersonNameComponents?, timeZone: String) async throws -> AppUser {
@@ -81,6 +89,20 @@ actor StubAuthService: AuthService {
         return user!
     }
     func updateName(_ name: String) async throws -> AppUser { user! }
+    func updateProfile(_ profile: ProfileUpdate) async throws -> AppUser { calls.append("updateProfile"); return user! }
+    /// Answers with the person who started it, even if the gate held it
+    /// past a sign-out.
+    func setPhoto(jpeg: Data, userId: String) async throws -> AppUser {
+        let started = user
+        calls.append("setPhoto \(userId)")
+        await photoGate?.wait()
+        return started!
+    }
+    func removePhoto(userId: String) async throws -> AppUser { calls.append("removePhoto \(userId)"); return user! }
+    func updateTimeZone(_ identifier: String) async throws {
+        calls.append("updateTimeZone \(identifier)")
+        user?.timezone = identifier
+    }
     func signOut() async { calls.append("signOut"); user = nil }
     func deleteAccount() async throws { calls.append("deleteAccount"); user = nil }
 }

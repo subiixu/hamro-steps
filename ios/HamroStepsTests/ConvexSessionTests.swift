@@ -147,7 +147,7 @@ struct ConvexSessionTests {
     @Test func signOutCallsLogoutThenClearsTheKeychain() async throws {
         let h = await ConvexHarness()
         try await signedIn(h)
-        await h.session.cacheUser(AppUser(userId: "user_1", name: "Sita", needsName: false, avatarColor: "#fff"))
+        await h.session.cacheUser(AppUser(userId: "user_1", name: "Sita", needsName: false))
         await h.session.signOut()
         #expect(await h.endpoints.logouts == ["refresh-1"])
         #expect(h.keychain.keys.isEmpty)

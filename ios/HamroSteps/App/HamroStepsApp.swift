@@ -106,7 +106,7 @@ extension EnvironmentValues {
 ///   -newUser              sign in with no name and no families
 ///   -screen <name>        open one screen directly: welcome, name, health,
 ///                         setup, create-name, create-goal, invite, join,
-///                         home, settings, me
+///                         home, settings, me, profile-edit, member
 ///   -homeState <state>    with the mocks, for Home screenshots: `walking`
 ///                         (you're out on a walk) or `goal` (goal reached)
 ///   -homeScroll <tile>    open Home scrolled to a tile (`week`, `today:end`…)
@@ -118,6 +118,9 @@ enum AppLaunch {
         case createName = "create-name"
         case createGoal = "create-goal"
         case invite, join, home, settings, me
+        case profileEdit = "profile-edit"
+        /// A family member's profile (Aama, from the sample family).
+        case member
     }
 
     /// Convex (auth, family and activity) unless this is a Debug mock launch

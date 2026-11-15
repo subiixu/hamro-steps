@@ -63,6 +63,8 @@ struct RootView: View {
             guard phase == .active, session.user != nil else { return }
             // Back in the foreground: the Nepal day may have changed while away.
             Task { await home.refresh() }
+            // They may have travelled: keep "their time now" right for family.
+            Task { await session.syncTimeZone() }
             guard session.healthOnboardingDone else { return }
             Task { await stepSync.sync() }
         }
@@ -72,7 +74,9 @@ struct RootView: View {
             await home.watchDayChanges(timeChanges: Self.significantTimeChanges())
         }
         .onChange(of: session.user?.id) { _, id in
-            guard id != nil, session.healthOnboardingDone else { return }
+            guard id != nil else { return }
+            Task { await session.syncTimeZone() }
+            guard session.healthOnboardingDone else { return }
             Task { await stepSync.sync() }
         }
     }
@@ -141,6 +145,27 @@ private struct DebugScreen: View {
             }
         case .join: NavigationStack { JoinFamilyView { _ in } }
         case .home, .settings, .me: MainTabView()
+        case .profileEdit: NavigationStack { ProfileEditView(user: session.user) }
+        case .member: DebugMemberProfile()
+        }
+    }
+}
+
+/// `-screen member`: Aama's profile from the sample family.
+private struct DebugMemberProfile: View {
+    @Environment(\.familyService) private var service
+    @State private var member: FamilyMember?
+
+    var body: some View {
+        Group {
+            if let member {
+                MemberProfileView(member: member)
+            } else {
+                OrbLoader(activity: .loadingFamily)
+            }
+        }
+        .task {
+            member = try? await service.familyToday(familyId: "f_thapa").members.first { $0.userId == "u_aama" }
         }
     }
 }

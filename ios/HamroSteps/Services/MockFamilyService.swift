@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// In-memory backend for this phase and for tests. Behaves like the Convex
 /// API (handoffs/2026-11-14-1403-convex-core.md, "API reference"): same
@@ -14,8 +15,10 @@ actor MockFamilyService: FamilyService {
 
     fileprivate struct StoredUser {
         var name: String?
-        var avatarColor: String
         var timezone: String?
+        var photoUrl: String? = nil
+        var city: String? = nil
+        var birthday: String? = nil
         var walkingSince: EpochMillis? = nil
         var walkEndsAt: EpochMillis? = nil
         var status: MemberStatus? = nil
@@ -100,7 +103,7 @@ actor MockFamilyService: FamilyService {
     func signIn(fullName: PersonNameComponents?, timeZone: String?) -> AppUser {
         let id = Self.sampleUserId
         if users[id] == nil {
-            users[id] = StoredUser(name: nil, avatarColor: "#E07A3F")
+            users[id] = StoredUser(name: nil)
         }
         if let given = fullName?.givenName, users[id]?.name == nil, FamilyRules.isValidName(given) {
             users[id]?.name = FamilyRules.cleanName(given)
@@ -118,6 +121,58 @@ actor MockFamilyService: FamilyService {
         notify(familiesOf: id)
         return appUser(id)!
     }
+
+    /// `updateProfile({name, city, birthday})`, then `me()`. Same rules as
+    /// the backend.
+    func updateMyProfile(_ profile: ProfileUpdate) throws -> AppUser {
+        let id = try requireUser()
+        guard FamilyRules.isValidName(profile.name) else { throw FamilyServiceError.invalidName }
+        guard FamilyRules.isValidCity(profile.city) else { throw FamilyServiceError.invalidCity }
+        if let birthday = profile.birthday, !ProfileFormat.isValidBirthday(birthday, today: now()) {
+            throw FamilyServiceError.invalidBirthday
+        }
+        let city = FamilyRules.cleanCity(profile.city)
+        users[id]?.name = FamilyRules.cleanName(profile.name)
+        users[id]?.city = city.isEmpty ? nil : city
+        users[id]?.birthday = profile.birthday
+        notify(familiesOf: id)
+        return appUser(id)!
+    }
+
+    /// Upload plus `setAvatar`: keeps the JPEG in a temporary file and
+    /// serves it by file URL, the way storage serves a URL.
+    func setMyPhoto(jpeg: Data) throws -> AppUser {
+        let id = try requireUser()
+        guard !jpeg.isEmpty, jpeg.count <= 5_000_000, UIImage(data: jpeg) != nil else {
+            throw FamilyServiceError.invalidPhoto
+        }
+        let url = Self.photoFolder.appending(path: "\(id)-\(UUID().uuidString).jpg")
+        do {
+            try FileManager.default.createDirectory(at: Self.photoFolder, withIntermediateDirectories: true)
+            try jpeg.write(to: url)
+        } catch {
+            throw FamilyServiceError.unavailable("upload_failed")
+        }
+        users[id]?.photoUrl = url.absoluteString
+        notify(familiesOf: id)
+        return appUser(id)!
+    }
+
+    /// `removeAvatar`.
+    func removeMyPhoto() throws -> AppUser {
+        let id = try requireUser()
+        users[id]?.photoUrl = nil
+        notify(familiesOf: id)
+        return appUser(id)!
+    }
+
+    func updateMyTimeZone(_ identifier: String) throws {
+        let id = try requireUser()
+        users[id]?.timezone = identifier
+        notify(familiesOf: id)
+    }
+
+    private static let photoFolder = URL.temporaryDirectory.appending(path: "mock-photos", directoryHint: .isDirectory)
 
     func signOut() {
         signedInUserId = nil
@@ -343,8 +398,9 @@ actor MockFamilyService: FamilyService {
     private func appUser(_ id: String) -> AppUser? {
         guard let user = users[id] else { return nil }
         return AppUser(
-            userId: id, name: user.name, needsName: user.name == nil, avatarColor: user.avatarColor,
-            timezone: user.timezone, lastSyncedAt: lastSyncedAt[id]
+            userId: id, name: user.name, needsName: user.name == nil,
+            timezone: user.timezone, lastSyncedAt: lastSyncedAt[id],
+            photoUrl: user.photoUrl, city: user.city, birthday: user.birthday
         )
     }
 
@@ -430,10 +486,11 @@ actor MockFamilyService: FamilyService {
         let members = family.memberIds.enumerated().compactMap { index, id -> FamilyMember? in
             guard let user = users[id] else { return nil }
             return FamilyMember(
-                userId: id, name: user.name ?? "", avatarColor: user.avatarColor, position: index,
+                userId: id, name: user.name ?? "", position: index,
                 isOrganiser: id == family.organiserId, steps: steps[id]?[day], lastSyncedAt: lastSyncedAt[id],
                 walkingSince: user.walkingSince, walkEndsAt: user.walkEndsAt,
-                status: user.status.flatMap { $0.isActive(at: now()) ? $0 : nil }
+                status: user.status.flatMap { $0.isActive(at: now()) ? $0 : nil },
+                photoUrl: user.photoUrl, city: user.city, timezone: user.timezone, birthday: user.birthday
             )
         }
         let percent = goal > 0 ? Int((Double(total) / Double(goal) * 100).rounded(.down)) : 0
@@ -489,18 +546,29 @@ extension MockFamilyService {
         let me = sampleUserId
 
         var seed = Seed()
-        let people: [(String, String?, String)] = [
-            (me, newUser ? nil : "Priya", "#E07A3F"),
-            ("u_aama", "Aama", "#2C9A76"),
-            ("u_buwa", "Buwa", "#4F74C9"),
-            ("u_sunita", "Sunita", "#A65DBA"),
-            ("u_bikash", "Bikash", "#C28A1E"),
-            ("u_rohan", "Rohan", "#3C8FA8"),
-            ("u_anju", "Anju", "#C2577A"),
-        ] + (1...8).map { ("u_full\($0)", "Member \($0)", "#7A7F87") }
-        for (id, name, color) in people {
-            seed.users[id] = StoredUser(name: name, avatarColor: color, timezone: id == me ? "Australia/Sydney" : "Asia/Kathmandu")
+        let people: [(String, String?)] = [
+            (me, newUser ? nil : "Priya"),
+            ("u_aama", "Aama"),
+            ("u_buwa", "Buwa"),
+            ("u_sunita", "Sunita"),
+            ("u_bikash", "Bikash"),
+            ("u_rohan", "Rohan"),
+            ("u_anju", "Anju"),
+        ] + (1...8).map { ("u_full\($0)", "Member \($0)") }
+        for (id, name) in people {
+            seed.users[id] = StoredUser(name: name, timezone: id == me ? "Australia/Sydney" : "Asia/Kathmandu")
         }
+        // Profiles: a couple of cities and birthdays, one photo.
+        if !newUser {
+            seed.users[me]?.city = "Sydney"
+            seed.users[me]?.birthday = "1990-03-12"
+        }
+        seed.users["u_aama"]?.city = "Kathmandu"
+        seed.users["u_aama"]?.birthday = "1962-08-24"
+        seed.users["u_aama"]?.photoUrl = samplePhotoURL()?.absoluteString
+        seed.users["u_buwa"]?.city = "Pokhara"
+        seed.users["u_rohan"]?.city = "Melbourne"
+        seed.users["u_rohan"]?.timezone = "Australia/Melbourne"
 
         // Who's out walking and members' statuses, relative to `now` so the
         // walk timers read the same in every screenshot.
@@ -555,5 +623,32 @@ extension MockFamilyService {
         ))
         seed.signedInUserId = signedIn ? me : nil
         return MockFamilyService(seed: seed, delay: delay, now: now)
+    }
+}
+
+extension MockFamilyService {
+    /// A soft two-tone picture standing in for a member's photo in previews
+    /// and screenshots, written once to the temporary folder.
+    nonisolated static func samplePhotoURL() -> URL? {
+        let url = URL.temporaryDirectory.appending(path: "mock-photos/sample-aama.jpg")
+        if FileManager.default.fileExists(atPath: url.path()) { return url }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format).image { context in
+            let colours = [UIColor(red: 0.96, green: 0.80, blue: 0.62, alpha: 1), UIColor(red: 0.55, green: 0.72, blue: 0.66, alpha: 1)]
+            let gradient = CGGradient(colorsSpace: nil, colors: colours.map(\.cgColor) as CFArray, locations: [0, 1])!
+            context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 256, y: 256), options: [])
+            UIColor(white: 1, alpha: 0.85).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 88, y: 52, width: 80, height: 80))
+            context.cgContext.fillEllipse(in: CGRect(x: 48, y: 150, width: 160, height: 150))
+        }
+        guard let data = image.jpegData(compressionQuality: 0.8) else { return nil }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+            return url
+        } catch {
+            return nil
+        }
     }
 }

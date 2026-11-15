@@ -287,13 +287,16 @@ enum FeedEventType: String, Codable, Sendable {
 struct FeedActor: Codable, Equatable, Sendable {
     var userId: String
     var name: String
-    /// Hex, e.g. "#E4572E", from the backend's 8-colour palette.
-    var avatarColor: String
+    var photoUrl: String?
+    var city: String?
+    var timezone: String?
 
-    init(userId: String, name: String, avatarColor: String) {
+    init(userId: String, name: String, photoUrl: String? = nil, city: String? = nil, timezone: String? = nil) {
         self.userId = userId
         self.name = name
-        self.avatarColor = avatarColor
+        self.photoUrl = photoUrl
+        self.city = city
+        self.timezone = timezone
     }
 
     /// The backend sends `name: null` (or leaves it out) for someone who hasn't
@@ -302,7 +305,9 @@ struct FeedActor: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         userId = try c.decode(String.self, forKey: .userId)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        avatarColor = try c.decode(String.self, forKey: .avatarColor)
+        photoUrl = try c.decodeIfPresent(String.self, forKey: .photoUrl)
+        city = try c.decodeIfPresent(String.self, forKey: .city)
+        timezone = try c.decodeIfPresent(String.self, forKey: .timezone)
     }
 }
 

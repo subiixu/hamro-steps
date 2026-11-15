@@ -117,7 +117,7 @@ struct StatusExpiryTests {
 }
 
 struct FeedEventTextTests {
-    let mum = FeedActor(userId: "u-mum", name: "Mum", avatarColor: "#D45D79")
+    let mum = FeedActor(userId: "u-mum", name: "Mum")
     let us = Locale(identifier: "en_US")
 
     private func event(_ type: FeedEventType, _ actor: FeedActor?) -> FeedEvent {
@@ -221,11 +221,6 @@ struct NotificationPrefsTests {
 }
 
 struct ActivityStyleTests {
-    @Test func avatarColorsParse() {
-        #expect(ActivityStyle.avatarColor("#E4572E") != ActivityStyle.avatarColor("#2E86AB"))
-        #expect(ActivityStyle.avatarColor("nonsense") == .accent)
-    }
-
     @Test func galleryLaunchArgument() {
         #expect(ActivityGalleryLaunch.parse(["app"]) == nil)
         #expect(ActivityGalleryLaunch.parse(["app", "-activityGallery"])?.page == nil)

@@ -118,6 +118,7 @@ final class LiveConvexTransport: ConvexTransport, @unchecked Sendable {
         case .bool(let value): value
         case .array(let values): values.map { encode($0) } as [ConvexEncodable?]
         case .object(let values): values.mapValues { encode($0) } as [String: ConvexEncodable?]
+        case .null: nil
         }
     }
 

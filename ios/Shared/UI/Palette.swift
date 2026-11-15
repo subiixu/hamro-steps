@@ -26,21 +26,3 @@ extension ShapeStyle where Self == Color {
     /// grey falls below AA on the grey canvas.
     static var secondaryText: Color { Color("SecondaryText") }
 }
-
-extension Color {
-    /// A member's avatar colour, sent by the backend as "#RRGGBB". Anything
-    /// unreadable falls back to the accent colour.
-    init(hex: String) {
-        let digits = hex.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
-        guard digits.count == 6, let value = UInt32(digits, radix: 16) else {
-            self = .accent
-            return
-        }
-        self.init(
-            .sRGB,
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255
-        )
-    }
-}

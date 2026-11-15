@@ -137,7 +137,7 @@ struct HomeModelTests {
 
 @MainActor
 struct SessionStoreTests {
-    private static let user = AppUser(userId: "u1", name: "Priya", needsName: false, avatarColor: "#E07A3F", timezone: nil, lastSyncedAt: nil)
+    private static let user = AppUser(userId: "u1", name: "Priya", needsName: false, timezone: nil, lastSyncedAt: nil)
 
     @Test func deleteAccountDeletesOnTheBackendThenForgetsTheSession() async throws {
         let service = StubFamilyService()

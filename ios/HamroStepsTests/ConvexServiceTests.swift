@@ -66,7 +66,7 @@ struct ConvexFixtureTests {
 
     @Test func me() throws {
         let user = try decode(AppUser.self, Fixtures.me(name: nil))
-        #expect(user == AppUser(userId: "user_1", name: nil, needsName: true, avatarColor: "#E07A5F", timezone: "Asia/Kathmandu", lastSyncedAt: nil))
+        #expect(user == AppUser(userId: "user_1", name: nil, needsName: true, timezone: "Asia/Kathmandu", lastSyncedAt: nil))
     }
 
     @Test func familyView() throws {

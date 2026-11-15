@@ -133,7 +133,7 @@ struct RecordingAuth: AuthService {
     var signOutGate: PushGate?
 
     private func user(_ id: String) -> AppUser {
-        AppUser(userId: id, name: "Priya", needsName: false, avatarColor: "#888888")
+        AppUser(userId: id, name: "Priya", needsName: false)
     }
 
     var currentUser: AppUser? { get async { backend.account.map(user) } }
@@ -143,6 +143,10 @@ struct RecordingAuth: AuthService {
         return user(next)
     }
     func updateName(_ name: String) async throws -> AppUser { user(backend.account ?? next) }
+    func updateProfile(_ profile: ProfileUpdate) async throws -> AppUser { user(backend.account ?? next) }
+    func setPhoto(jpeg: Data, userId: String) async throws -> AppUser { user(backend.account ?? next) }
+    func removePhoto(userId: String) async throws -> AppUser { user(backend.account ?? next) }
+    func updateTimeZone(_ identifier: String) async throws {}
     func signOut() async {
         await signOutGate?.wait()
         log.add("signOut \(backend.account ?? "nobody")")

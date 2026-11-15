@@ -1,20 +1,5 @@
 import SwiftUI
 
-/// Small pieces the activity components share.
-enum ActivityStyle {
-    /// A backend avatar colour ("#E4572E") as a `Color`; the accent colour
-    /// when the string isn't a 6-digit hex.
-    static func avatarColor(_ hex: String) -> Color {
-        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
-        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return .accent }
-        return Color(
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255
-        )
-    }
-}
-
 extension StatusPreset {
     var icon: Icon {
         switch self {
@@ -29,8 +14,8 @@ extension StatusPreset {
     }
 }
 
-/// A member's initial on their avatar colour. Family-wide feed events use
-/// a family icon instead.
+/// A member's photo (or initial). Family-wide feed events use a family icon
+/// instead.
 struct ActivityAvatar: View {
     enum Content {
         case member(FeedActor)
@@ -43,12 +28,7 @@ struct ActivityAvatar: View {
     var body: some View {
         switch content {
         case .member(let actor):
-            Text(actor.name.prefix(1).uppercased())
-                .font(.system(size: size * 0.45, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(ActivityStyle.avatarColor(actor.avatarColor), in: .circle)
-                .accessibilityHidden(true)
+            Avatar(name: actor.name, photoUrl: actor.photoUrl, size: size, grows: false)
         case .family:
             Icon.family.size(size * 0.5)
                 .foregroundStyle(.goal)

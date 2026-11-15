@@ -77,6 +77,7 @@ targets:
         CONVEX_SITE_URL: https://harmless-dolphin-642.ap-southeast-2.convex.site
         INFOPLIST_KEY_CFBundleDisplayName: Hamro Steps
         INFOPLIST_KEY_NSHealthShareUsageDescription: Hamro Steps reads your step count to share it with your family.
+        INFOPLIST_KEY_NSCameraUsageDescription: Hamro Steps uses the camera only when you take a profile photo for your family to see.
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: Hamro Steps only reads your step count. It never writes to Health.
         # iPhone only: the target default (1,2) overrides the project-level setting.
         TARGETED_DEVICE_FAMILY: "1"

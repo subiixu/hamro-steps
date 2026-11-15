@@ -11,13 +11,30 @@ struct AppUser: Codable, Hashable, Sendable, Identifiable {
     /// on the very first sign-in).
     var name: String?
     var needsName: Bool
-    var avatarColor: String
     var timezone: String?
     /// Milliseconds since 1970.
     var lastSyncedAt: Double?
+    /// Their profile photo; `nil` shows their initial instead.
+    var photoUrl: String?
+    /// "Lives in": a place they typed, never device location.
+    var city: String?
+    /// "YYYY-MM-DD", or `nil` when they haven't given one.
+    var birthday: String?
 
     var id: String { userId }
     var displayName: String { name ?? "" }
+
+    init(userId: String, name: String?, needsName: Bool, timezone: String? = nil, lastSyncedAt: Double? = nil,
+         photoUrl: String? = nil, city: String? = nil, birthday: String? = nil) {
+        self.userId = userId
+        self.name = name
+        self.needsName = needsName
+        self.timezone = timezone
+        self.lastSyncedAt = lastSyncedAt
+        self.photoUrl = photoUrl
+        self.city = city
+        self.birthday = birthday
+    }
 }
 
 /// The backend's `FamilyView`: `createFamily`, `joinFamily`, `updateFamily`,
@@ -54,7 +71,6 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
     let userId: String
     /// Empty when the person hasn't given a name yet (`null` from the backend).
     var name: String
-    var avatarColor: String
     var position: Int
     var isOrganiser: Bool
     /// Today's steps. `nil` means "not synced yet", which is not the same as 0.
@@ -67,6 +83,13 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
     var walkEndsAt: EpochMillis?
     /// The member's status; the server sends `nil` once it has expired.
     var status: MemberStatus?
+    var photoUrl: String?
+    /// "Lives in", as they typed it.
+    var city: String?
+    /// IANA identifier of their phone's time zone, for "their time now".
+    var timezone: String?
+    /// "YYYY-MM-DD"; only `familyToday` sends it.
+    var birthday: String?
 
     var id: String { userId }
 
@@ -79,11 +102,15 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
         lastSyncedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 
-    init(userId: String, name: String, avatarColor: String, position: Int, isOrganiser: Bool, steps: Int?, lastSyncedAt: Double?,
-         walkingSince: EpochMillis? = nil, walkEndsAt: EpochMillis? = nil, status: MemberStatus? = nil) {
+    init(userId: String, name: String, position: Int, isOrganiser: Bool, steps: Int?, lastSyncedAt: Double?,
+         walkingSince: EpochMillis? = nil, walkEndsAt: EpochMillis? = nil, status: MemberStatus? = nil,
+         photoUrl: String? = nil, city: String? = nil, timezone: String? = nil, birthday: String? = nil) {
         self.userId = userId
         self.name = name
-        self.avatarColor = avatarColor
+        self.photoUrl = photoUrl
+        self.city = city
+        self.timezone = timezone
+        self.birthday = birthday
         self.position = position
         self.isOrganiser = isOrganiser
         self.steps = steps
@@ -94,15 +121,15 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case userId, name, avatarColor, position, isOrganiser, steps, lastSyncedAt
+        case userId, name, position, isOrganiser, steps, lastSyncedAt
         case walkingSince, walkEndsAt, status
+        case photoUrl, city, timezone, birthday
     }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         userId = try c.decode(String.self, forKey: .userId)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        avatarColor = try c.decode(String.self, forKey: .avatarColor)
         position = try c.decode(Int.self, forKey: .position)
         isOrganiser = try c.decode(Bool.self, forKey: .isOrganiser)
         steps = try c.decodeIfPresent(Int.self, forKey: .steps)
@@ -110,6 +137,10 @@ struct FamilyMember: Codable, Hashable, Sendable, Identifiable {
         walkingSince = try c.decodeIfPresent(EpochMillis.self, forKey: .walkingSince)
         walkEndsAt = try c.decodeIfPresent(EpochMillis.self, forKey: .walkEndsAt)
         status = try c.decodeIfPresent(MemberStatus.self, forKey: .status)
+        photoUrl = try c.decodeIfPresent(String.self, forKey: .photoUrl)
+        city = try c.decodeIfPresent(String.self, forKey: .city)
+        timezone = try c.decodeIfPresent(String.self, forKey: .timezone)
+        birthday = try c.decodeIfPresent(String.self, forKey: .birthday)
     }
 }
 
@@ -177,6 +208,9 @@ enum FamilyServiceError: Error, Hashable, Sendable {
     case invalidDay
     case cannotRemoveSelf
     case invalidToken
+    case invalidPhoto
+    case invalidCity
+    case invalidBirthday
     case unavailable(String)
 
     init(code: String) {
@@ -192,6 +226,9 @@ enum FamilyServiceError: Error, Hashable, Sendable {
         case "invalid_day": self = .invalidDay
         case "cannot_remove_self": self = .cannotRemoveSelf
         case "invalid_token": self = .invalidToken
+        case "invalid_photo": self = .invalidPhoto
+        case "invalid_city": self = .invalidCity
+        case "invalid_birthday": self = .invalidBirthday
         default: self = .unavailable(code)
         }
     }
@@ -209,6 +246,9 @@ enum FamilyServiceError: Error, Hashable, Sendable {
         case .invalidDay: "invalid_day"
         case .cannotRemoveSelf: "cannot_remove_self"
         case .invalidToken: "invalid_token"
+        case .invalidPhoto: "invalid_photo"
+        case .invalidCity: "invalid_city"
+        case .invalidBirthday: "invalid_birthday"
         case .unavailable(let code): code
         }
     }
@@ -232,6 +272,12 @@ enum FamilyServiceError: Error, Hashable, Sendable {
             String(localized: "Please sign in again.")
         case .cannotRemoveSelf:
             String(localized: "To take yourself out of the family, use Leave family instead.")
+        case .invalidPhoto:
+            String(localized: "That photo didn't work. Please try a different one.")
+        case .invalidCity:
+            String(localized: "Please keep the place to 40 letters or fewer.")
+        case .invalidBirthday:
+            String(localized: "Please pick a birthday that's already happened.")
         case .invalidSteps, .invalidDay, .unavailable:
             String(localized: "Something went wrong. Please try again in a moment.")
         }
@@ -244,6 +290,7 @@ enum FamilyRules {
     static let suggestedGoal = 50_000
     static let goalPresets = [30_000, 50_000, 75_000, 100_000]
     static let nameLength = 1...40
+    static let cityMaxLength = 40
     static let maxMembers = 8
     static let stepsRange = 0...200_000
 
@@ -253,6 +300,15 @@ enum FamilyRules {
 
     static func isValidName(_ name: String) -> Bool {
         nameLength.contains(cleanName(name).count)
+    }
+
+    /// Trimmed; empty means "no city".
+    static func cleanCity(_ city: String) -> String {
+        city.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func isValidCity(_ city: String) -> Bool {
+        cleanCity(city).count <= cityMaxLength
     }
 }
 

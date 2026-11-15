@@ -111,6 +111,10 @@ actor ConvexSession {
 
     var userId: String? { (try? loadStored())?.userId }
 
+    /// Changes on every sign-in, sign-out and forget. Work that spans several
+    /// calls compares it before and after to know it's still the same session.
+    var currentGeneration: Int { generation }
+
     /// True when the next call should refresh first: no access token in
     /// memory yet (a fresh launch), or within `refreshMargin` of expiry.
     var needsRefresh: Bool {

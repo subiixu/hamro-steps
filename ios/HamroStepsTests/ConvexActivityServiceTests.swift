@@ -97,7 +97,7 @@ struct ConvexActivityServiceTests {
         let walk = feed[0]
         #expect(walk.id == "evt_1")
         #expect(walk.type == .walkStarted)
-        #expect(walk.actor == FeedActor(userId: "user_1", name: "Sita", avatarColor: "#E07A5F"))
+        #expect(walk.actor == FeedActor(userId: "user_1", name: "Sita"))
         #expect(walk.day == "2027-01-15")
         #expect(walk.createdAt == 1_800_000_000_000)
         #expect(walk.data == FeedEventData(walkId: "walk_1"))
@@ -106,7 +106,7 @@ struct ConvexActivityServiceTests {
         #expect(walk.myReaction == .clap)
 
         // Someone who hasn't given a name yet: an empty name, like familyToday.
-        #expect(feed[1].actor == FeedActor(userId: "user_2", name: "", avatarColor: "#3D405B"))
+        #expect(feed[1].actor == FeedActor(userId: "user_2", name: ""))
         #expect(feed[1].type == .member5k)
         #expect(feed[1].data == nil)
         #expect(feed[1].myReaction == nil)

@@ -31,12 +31,12 @@ describe("photo avatar", () => {
   test("setAvatar sets the photo, and replacing it deletes the old blob", async () => {
     const u = await makeUser(t);
     const first = await store("image/jpeg");
-    expect(await u.as.mutation(api.users.setAvatar, { storageId: first })).toBeNull();
+    expect(await u.as.mutation(api.users.setAvatar, { storageId: first, userId: u.id })).toBeNull();
     expect((await userDoc(u))!.photoId).toBe(first);
     expect((await u.as.query(api.users.me, {})).photoUrl).toEqual(expect.any(String));
 
     const second = await store("image/png");
-    await u.as.mutation(api.users.setAvatar, { storageId: second });
+    await u.as.mutation(api.users.setAvatar, { storageId: second, userId: u.id });
     expect((await userDoc(u))!.photoId).toBe(second);
     expect(await blobExists(first)).toBe(false);
     expect(await blobExists(second)).toBe(true);
@@ -45,12 +45,12 @@ describe("photo avatar", () => {
   test("rejects a non-image or oversize blob and keeps the current photo", async () => {
     const u = await makeUser(t);
     const good = await store("image/jpeg");
-    await u.as.mutation(api.users.setAvatar, { storageId: good });
+    await u.as.mutation(api.users.setAvatar, { storageId: good, userId: u.id });
 
     const text = await store("text/plain");
-    await expectCode(u.as.mutation(api.users.setAvatar, { storageId: text }), "invalid_photo");
+    await expectCode(u.as.mutation(api.users.setAvatar, { storageId: text, userId: u.id }), "invalid_photo");
     const huge = await store("image/jpeg", 5 * 1024 * 1024 + 1);
-    await expectCode(u.as.mutation(api.users.setAvatar, { storageId: huge }), "invalid_photo");
+    await expectCode(u.as.mutation(api.users.setAvatar, { storageId: huge, userId: u.id }), "invalid_photo");
 
     expect((await userDoc(u))!.photoId).toBe(good);
     expect(await blobExists(good)).toBe(true);
@@ -60,12 +60,12 @@ describe("photo avatar", () => {
     const a = await makeUser(t, "Asha");
     const b = await makeUser(t, "Bikash");
     const photo = await store("image/jpeg");
-    await a.as.mutation(api.users.setAvatar, { storageId: photo });
+    await a.as.mutation(api.users.setAvatar, { storageId: photo, userId: a.id });
     const urlBefore = (await a.as.query(api.users.me, {})).photoUrl;
 
-    await expectCode(b.as.mutation(api.users.setAvatar, { storageId: photo }), "invalid_photo");
+    await expectCode(b.as.mutation(api.users.setAvatar, { storageId: photo, userId: b.id }), "invalid_photo");
     expect((await userDoc(b))!.photoId).toBeUndefined();
-    await b.as.mutation(api.users.removeAvatar, {});
+    await b.as.mutation(api.users.removeAvatar, { userId: b.id });
 
     expect(await blobExists(photo)).toBe(true);
     expect((await userDoc(a))!.photoId).toBe(photo);
@@ -73,29 +73,48 @@ describe("photo avatar", () => {
     expect(urlBefore).toEqual(expect.any(String));
   });
 
+  test("setAvatar and removeAvatar refuse a userId that isn't the caller's, changing nothing", async () => {
+    const a = await makeUser(t, "Asha");
+    const b = await makeUser(t, "Bikash");
+    const bPhoto = await store("image/jpeg");
+    await b.as.mutation(api.users.setAvatar, { storageId: bPhoto, userId: b.id });
+
+    // A photo picked as Asha, sent with Bikash's token.
+    const aPick = await store("image/jpeg");
+    await expectCode(
+      b.as.mutation(api.users.setAvatar, { storageId: aPick, userId: a.id }),
+      "not_authorized",
+    );
+    await expectCode(b.as.mutation(api.users.removeAvatar, { userId: a.id }), "not_authorized");
+
+    expect((await userDoc(b))!.photoId).toBe(bPhoto);
+    expect(await blobExists(bPhoto)).toBe(true);
+    expect((await userDoc(a))!.photoId).toBeUndefined();
+  });
+
   test("a blob of exactly 5 MB is accepted", async () => {
     const u = await makeUser(t);
     const id = await store("image/heic", 5 * 1024 * 1024);
-    await u.as.mutation(api.users.setAvatar, { storageId: id });
+    await u.as.mutation(api.users.setAvatar, { storageId: id, userId: u.id });
     expect((await userDoc(u))!.photoId).toBe(id);
   });
 
   test("removeAvatar deletes the blob and clears the photo", async () => {
     const u = await makeUser(t);
     const id = await store("image/jpeg");
-    await u.as.mutation(api.users.setAvatar, { storageId: id });
-    expect(await u.as.mutation(api.users.removeAvatar, {})).toBeNull();
+    await u.as.mutation(api.users.setAvatar, { storageId: id, userId: u.id });
+    expect(await u.as.mutation(api.users.removeAvatar, { userId: u.id })).toBeNull();
     expect((await userDoc(u))!.photoId).toBeUndefined();
     expect(await blobExists(id)).toBe(false);
     expect((await u.as.query(api.users.me, {})).photoUrl).toBeNull();
     // No photo: a no-op.
-    expect(await u.as.mutation(api.users.removeAvatar, {})).toBeNull();
+    expect(await u.as.mutation(api.users.removeAvatar, { userId: u.id })).toBeNull();
   });
 
   test("account deletion deletes the photo blob", async () => {
     const u = await makeUser(t);
     const id = await store("image/jpeg");
-    await u.as.mutation(api.users.setAvatar, { storageId: id });
+    await u.as.mutation(api.users.setAvatar, { storageId: id, userId: u.id });
     await t.mutation(internal.users.deleteAccountData, { userId: u.id });
     expect(await blobExists(id)).toBe(false);
     expect(await userDoc(u)).toBeNull();
@@ -107,7 +126,7 @@ describe("orphan blob sweep", () => {
     setNow("2026-11-15T10:00:00Z");
     const u = await makeUser(t);
     const photo = await store("image/jpeg");
-    await u.as.mutation(api.users.setAvatar, { storageId: photo });
+    await u.as.mutation(api.users.setAvatar, { storageId: photo, userId: u.id });
     const oldOrphan = await store("text/plain");
 
     setNow("2026-11-15T10:59:00Z");
@@ -176,7 +195,7 @@ describe("what family members see", () => {
     await b.as.mutation(api.families.joinFamily, { code: f.inviteCode });
 
     const photo = await store("image/jpeg");
-    await a.as.mutation(api.users.setAvatar, { storageId: photo });
+    await a.as.mutation(api.users.setAvatar, { storageId: photo, userId: a.id });
     await a.as.mutation(api.users.updateProfile, {
       city: "Sydney",
       birthday: "1980-05-01",

@@ -20,6 +20,11 @@ final class SessionStore {
     private(set) var user: AppUser?
     private(set) var families: [FamilySummary] = []
     private(set) var isStarted = false
+    private var isSyncingTimeZone = false
+    /// Bumped on every start, sign-in, sign-out and delete, so a profile
+    /// change that finishes after the account changed can't put the old
+    /// person back on screen.
+    private var accountEpoch = 0
     /// The Health screen is shown once, whatever the person picked.
     private(set) var healthOnboardingDone: Bool
 
@@ -46,6 +51,7 @@ final class SessionStore {
     }
 
     func start() async {
+        accountEpoch += 1
         user = await auth.currentUser
         if let push, push.hasUnfinishedSignOut {
             // The app quit before an earlier sign-out's cleanup finished:
@@ -63,6 +69,7 @@ final class SessionStore {
     }
 
     func signIn(identityToken: String, authorizationCode: String, fullName: PersonNameComponents?) async throws {
+        accountEpoch += 1
         let auth = auth
         let timeZone = TimeZone.current.identifier
         let signIn: @MainActor () async throws -> AppUser = {
@@ -81,6 +88,53 @@ final class SessionStore {
 
     func saveName(_ name: String) async throws {
         user = try await auth.updateName(FamilyRules.cleanName(name))
+    }
+
+    /// The Me edit screen's Save.
+    func saveProfile(_ profile: ProfileUpdate) async throws {
+        let auth = auth
+        try await applyToSameAccount { try await auth.updateProfile(profile) }
+    }
+
+    /// `jpeg` is already downscaled (`ProfilePhoto.jpeg`). `userId` is who
+    /// was signed in when the person started the photo action; if that's no
+    /// longer who's signed in, nothing is sent (`CancellationError`).
+    func setPhoto(jpeg: Data, userId: String) async throws {
+        guard user?.id == userId else { throw CancellationError() }
+        let auth = auth
+        try await applyToSameAccount { try await auth.setPhoto(jpeg: jpeg, userId: userId) }
+    }
+
+    func removePhoto(userId: String) async throws {
+        guard user?.id == userId else { throw CancellationError() }
+        let auth = auth
+        try await applyToSameAccount { try await auth.removePhoto(userId: userId) }
+    }
+
+    /// Runs a profile change and shows its result, unless the account
+    /// changed while it ran: then throws `CancellationError` and leaves
+    /// `user` alone.
+    private func applyToSameAccount(_ change: @MainActor () async throws -> AppUser) async throws {
+        let epoch = accountEpoch
+        let userId = user?.id
+        let updated = try await change()
+        guard accountEpoch == epoch, user?.id == userId else { throw CancellationError() }
+        user = updated
+    }
+
+    /// When the phone's time zone differs from the stored one (they
+    /// travelled), store the new one so family see the right local time.
+    /// Quiet: no UI, failures are left for the next time the app opens.
+    func syncTimeZone(_ identifier: String = TimeZone.current.identifier) async {
+        guard let user, !identifier.isEmpty, user.timezone != identifier, !isSyncingTimeZone else { return }
+        isSyncingTimeZone = true
+        defer { isSyncingTimeZone = false }
+        do {
+            try await auth.updateTimeZone(identifier)
+            if self.user?.id == user.id { self.user?.timezone = identifier }
+        } catch {
+            // Ignored: tried again next time the app becomes active.
+        }
     }
 
     func finishHealthOnboarding() {
@@ -103,6 +157,7 @@ final class SessionStore {
     /// stop reaching it. Best effort: unregister errors are ignored and each
     /// call is cut off by its request timeout.
     func signOut() async {
+        accountEpoch += 1
         if let push {
             let auth = auth
             await push.signOut { await auth.signOut() }
@@ -117,6 +172,7 @@ final class SessionStore {
     /// only then forgets the local session. On failure the person stays
     /// signed in and nothing is lost.
     func deleteAccount() async throws {
+        accountEpoch += 1
         let service = service
         let auth = auth
         let delete: @MainActor () async throws -> Void = {

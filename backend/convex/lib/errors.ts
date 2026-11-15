@@ -21,7 +21,8 @@ export type ErrorCode =
   | "invalid_device_token"
   | "invalid_photo"
   | "invalid_city"
-  | "invalid_birthday";
+  | "invalid_birthday"
+  | "not_authorized";
 
 export function fail(code: ErrorCode, message?: string): never {
   throw new ConvexError({ code, ...(message ? { message } : {}) });

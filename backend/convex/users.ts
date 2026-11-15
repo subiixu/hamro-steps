@@ -98,9 +98,13 @@ export const generateAvatarUploadUrl = mutation({
  * hourly orphan sweep deletes it.
  */
 export const setAvatar = mutation({
-  args: { storageId: v.id("_storage") },
+  args: { storageId: v.id("_storage"), userId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
+    // The app names the account the photo was picked for. If a different
+    // account's token sent this (sign-out/sign-in race), refuse before
+    // touching anything.
+    if (user._id !== args.userId) fail("not_authorized");
     if (user.photoId === args.storageId) return null;
     const meta = await ctx.db.system.get("_storage", args.storageId);
     if (!meta) fail("invalid_photo");
@@ -163,9 +167,10 @@ export const sweepOrphanBlobs = internalMutation({
 
 /** Deletes the user's photo blob and clears it from the profile. */
 export const removeAvatar = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
     const user = await requireUser(ctx);
+    if (user._id !== args.userId) fail("not_authorized");
     if (user.photoId) {
       await deleteBlob(ctx, user.photoId);
       await ctx.db.patch(user._id, { photoId: undefined });

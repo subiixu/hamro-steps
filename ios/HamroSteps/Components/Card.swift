@@ -164,35 +164,63 @@ struct Notice: View {
     }
 }
 
-/// A round coloured avatar with the person's initial (there are no photos in
-/// the data model). Grows with Dynamic Type, up to 1.5× its base size.
+/// Everyone's avatar: their photo, or (with no photo, while it loads, or
+/// if it fails) their initial on one neutral fill, the same for everyone.
+/// Grows with Dynamic Type, up to 1.5× its base size, unless `grows` is off.
 struct Avatar: View {
     let name: String
-    let hex: String
+    var photoUrl: String?
     /// A white ring, for avatars that overlap each other.
     var ringed = false
     private let base: CGFloat
+    private let grows: Bool
     @ScaledMetric private var size: CGFloat
 
-    init(name: String, hex: String, size: CGFloat = 44, ringed: Bool = false) {
+    init(name: String, photoUrl: String?, size: CGFloat = 44, ringed: Bool = false, grows: Bool = true) {
         self.name = name
-        self.hex = hex
+        self.photoUrl = photoUrl
         self.ringed = ringed
         self.base = size
+        self.grows = grows
         _size = ScaledMetric(wrappedValue: size, relativeTo: .title2)
     }
 
     var body: some View {
-        let side = min(size, base * 1.5)
-        Text(name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?")
-            .font(.system(size: side * 0.42, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white)
+        let side = grows ? min(size, base * 1.5) : base
+        content(side)
             .frame(width: side, height: side)
-            .background(Color(hex: hex), in: .circle)
+            .clipShape(.circle)
             .overlay {
                 if ringed { Circle().strokeBorder(.surface, lineWidth: 2) }
             }
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func content(_ side: CGFloat) -> some View {
+        if let url = photoUrl.flatMap(URL.init(string:)) {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    initial(side)
+                }
+            }
+        } else {
+            initial(side)
+        }
+    }
+
+    private func initial(_ side: CGFloat) -> some View {
+        Text(Self.initial(of: name))
+            .font(.system(size: side * 0.42, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondaryText)
+            .frame(width: side, height: side)
+            .background(.surfaceMuted, in: .circle)
+    }
+
+    static func initial(of name: String) -> String {
+        name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?"
     }
 }
 
@@ -201,7 +229,7 @@ struct AvatarStack: View {
     struct Person: Identifiable {
         let id: String
         let name: String
-        let hex: String
+        let photoUrl: String?
     }
 
     let people: [Person]
@@ -215,7 +243,7 @@ struct AvatarStack: View {
         let side = min(size * scale, size * 1.5)
         HStack(spacing: -side * 0.3) {
             ForEach(shown) { person in
-                Avatar(name: person.name, hex: person.hex, size: size, ringed: true)
+                Avatar(name: person.name, photoUrl: person.photoUrl, size: size, ringed: true)
             }
             if extra > 0 {
                 Text("+\(extra)")

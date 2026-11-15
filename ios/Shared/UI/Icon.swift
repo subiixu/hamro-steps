@@ -34,6 +34,12 @@ enum Icon: String, CaseIterable, Sendable {
     case calendar = "icon-calendar"          // calendar-03: "This week"
     case moments = "icon-moments"            // favourite: "Family moments"
 
+    // Profile: photo, city, birthday
+    case camera = "icon-camera"              // camera-01: take a photo
+    case photo = "icon-photo"                // image-01: choose a photo
+    case location = "icon-location"          // location-01: "Lives in"
+    case birthday = "icon-birthday"          // birthday-cake
+
     // Activity: walks, status, feed, notifications
     case walking = "icon-walking"            // walking: "I'm walking", badge
     case stop = "icon-stop"                  // stop: "Stop walk"

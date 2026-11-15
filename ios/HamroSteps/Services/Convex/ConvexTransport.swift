@@ -10,6 +10,8 @@ enum ConvexArg: Hashable, Sendable {
     case bool(Bool)
     case array([ConvexArg])
     case object([String: ConvexArg])
+    /// JSON `null`, e.g. `birthday: null` to clear it.
+    case null
 
     static func int(_ value: Int) -> ConvexArg { .number(Double(value)) }
 }

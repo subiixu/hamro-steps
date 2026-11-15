@@ -167,7 +167,7 @@ struct HomeView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
             : AnyLayout(HStackLayout(spacing: 10))
         return layout {
-            AvatarStack(people: home.members.map { AvatarStack.Person(id: $0.userId, name: $0.name, hex: $0.avatarColor) })
+            AvatarStack(people: home.members.map { AvatarStack.Person(id: $0.userId, name: $0.name, photoUrl: $0.photoUrl) })
             Group {
                 if home.members.count == 1 {
                     Text("Just you so far")
@@ -527,6 +527,7 @@ struct ContributionsCard: View {
     /// Today's family total; each bar is a member's share of it.
     var familyTotal: Int = 0
     @Environment(\.now) private var now
+    @State private var shownMember: FamilyMember?
 
     var body: some View {
         // Ticks so a walk or status drops off when it ends, without waiting
@@ -541,9 +542,20 @@ struct ContributionsCard: View {
             VStack(alignment: .leading, spacing: 18) {
                 // Fixed family order: shares are shown, never ranked.
                 ForEach(members) { member in
-                    MemberRow(member: member, isYou: member.userId == currentUserId, now: now, share: share(of: member))
+                    // Tap someone for their profile: photo, place, time, birthday.
+                    Button {
+                        shownMember = member
+                    } label: {
+                        MemberRow(member: member, isYou: member.userId == currentUserId, now: now, share: share(of: member))
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Shows their profile"))
                 }
             }
+        }
+        .sheet(item: $shownMember) { member in
+            MemberProfileView(member: member, isYou: member.userId == currentUserId)
         }
     }
 
@@ -572,7 +584,7 @@ struct MemberRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Avatar(name: member.name, hex: member.avatarColor)
+            Avatar(name: member.name, photoUrl: member.photoUrl)
                 .overlay(alignment: .bottomTrailing) {
                     if isWalking { WalkingDot().offset(x: 4, y: 4) }
                 }
@@ -603,7 +615,7 @@ struct MemberRow: View {
                     if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                     steps
                 }
-                ShareBar(share: share, color: Color(hex: member.avatarColor))
+                ShareBar(share: share)
             }
         }
         .accessibilityElement(children: .combine)
@@ -626,11 +638,10 @@ struct MemberRow: View {
     }
 }
 
-/// A thin bar in the member's colour: their share of today's family total.
-/// Not a ranking; the family order stays fixed.
+/// A thin accent bar, the same for everyone: their share of today's family
+/// total. Not a ranking; the family order stays fixed.
 struct ShareBar: View {
     let share: Double
-    let color: Color
 
     var body: some View {
         Capsule()
@@ -639,7 +650,7 @@ struct ShareBar: View {
             .overlay(alignment: .leading) {
                 GeometryReader { proxy in
                     Capsule()
-                        .fill(color)
+                        .fill(.accent)
                         .frame(width: share > 0 ? max(proxy.size.width * share, 4) : 0)
                 }
             }

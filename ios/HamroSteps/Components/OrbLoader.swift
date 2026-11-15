@@ -12,12 +12,13 @@ struct OrbLoader: View {
         case saving
         case joining
         case deleting
+        case addingPhoto
 
         var orbState: OrbState {
             switch self {
             case .loadingFamily, .syncingSteps: .working
             case .connectingHealth, .signingIn, .joining: .connecting
-            case .saving, .deleting: .working
+            case .saving, .deleting, .addingPhoto: .working
             }
         }
 
@@ -30,6 +31,7 @@ struct OrbLoader: View {
             case .saving: "Saving…"
             case .joining: "Joining your family…"
             case .deleting: "Deleting your account…"
+            case .addingPhoto: "Adding your photo…"
             }
         }
     }
