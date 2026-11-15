@@ -3,6 +3,14 @@ export const MIN_GOAL = 1_000;
 export const MAX_GOAL = 1_000_000;
 export const DEFAULT_GOAL = 50_000;
 export const MAX_NAME_LENGTH = 40;
+/** Typed city label on a profile. */
+export const MAX_CITY_LENGTH = 40;
+/** Largest profile photo upload. */
+export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+/** Uploaded blobs no profile points at are deleted once older than this. */
+export const ORPHAN_BLOB_AGE_MS = 60 * 60_000;
+/** Blobs the orphan sweep looks at per mutation; it reschedules itself for the rest. */
+export const ORPHAN_SWEEP_BATCH = 200;
 export const MAX_DAILY_STEPS = 200_000;
 
 export const INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";

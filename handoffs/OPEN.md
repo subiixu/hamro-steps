@@ -6,8 +6,8 @@ rebuild "what's pending" by searching the handoff folders. Before Jarvis
 stops, this file must hold everything a fresh session needs: the user may
 clear Jarvis after a long idle.
 
-Jarvis session: s_1910bb4f
-Usage band: green (the 5-hour window has reset since the last reading (307 min ago), 23:20)
+Jarvis session: s_11ed44f2
+Usage band: green (the 5-hour window has reset since the last reading (1037 min ago), 18:09)
 
 ## Questions for the user
 - manual test (redesign, largest text): Settings › Accessibility › Larger Text at max, then scroll Health how-to, goal presets, Family settings People + Remove, status expiry chips, Change name or goal, Delete account. Nothing cut off or unreachable? (second opinion on phase 2 flagged these as unchecked)
@@ -18,6 +18,7 @@ Usage band: green (the 5-hour window has reset since the last reading (307 min a
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
+- 2026-11-15 18:13 · claude/claude-opus-5-5 high · term s_9ba887b9 · handoffs/briefs/2026-11-15-1812-profile-ios.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 

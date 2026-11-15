@@ -11,12 +11,21 @@ export default defineSchema({
     appleSub: v.string(),
     /** Missing until Apple gives a name or the user types one. */
     name: v.optional(v.string()),
+    /** Legacy; still returned for older builds, nothing new uses it. */
     avatarColor: v.string(),
+    /** Profile photo blob; replaced/deleted by users.setAvatar/removeAvatar. */
+    photoId: v.optional(v.id("_storage")),
+    /** Free-text city label the user types (no device location). */
+    city: v.optional(v.string()),
+    /** "YYYY-MM-DD". */
+    birthday: v.optional(v.string()),
     /** IANA zone from the device; informational only. */
     timezone: v.optional(v.string()),
     lastSyncedAt: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_appleSub", ["appleSub"]),
+  })
+    .index("by_appleSub", ["appleSub"])
+    .index("by_photoId", ["photoId"]),
 
   /** Apple's refresh token, kept only to revoke it on account deletion. */
   appleTokens: defineTable({

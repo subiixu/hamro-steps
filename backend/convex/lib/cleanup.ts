@@ -66,7 +66,7 @@ async function deleteFamily(ctx: MutationCtx, familyId: Id<"families">) {
  * refresh token, if one was stored, so the caller can revoke it.
  * Also their walks (a pending autoStop then finds nothing) and status.
  * Also every feed event they posted and every reaction they made.
- * Also their push devices and notification prefs.
+ * Also their push devices and notification prefs, and their profile photo blob.
  */
 export async function deleteUserData(
   ctx: MutationCtx,
@@ -122,6 +122,13 @@ export async function deleteUserData(
     appleRefreshToken = row.refreshToken;
     await ctx.db.delete(row._id);
   }
+  const user = await ctx.db.get(userId);
+  if (user?.photoId) await deleteBlob(ctx, user.photoId);
   await ctx.db.delete(userId);
   return appleRefreshToken;
+}
+
+/** Deletes a storage blob, tolerating one that's already gone. */
+export async function deleteBlob(ctx: MutationCtx, id: Id<"_storage">) {
+  if (await ctx.db.system.get("_storage", id)) await ctx.storage.delete(id);
 }

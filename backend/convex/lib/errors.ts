@@ -18,7 +18,10 @@ export type ErrorCode =
   | "invalid_status"
   | "invalid_expiry"
   | "invalid_emoji"
-  | "invalid_device_token";
+  | "invalid_device_token"
+  | "invalid_photo"
+  | "invalid_city"
+  | "invalid_birthday";
 
 export function fail(code: ErrorCode, message?: string): never {
   throw new ConvexError({ code, ...(message ? { message } : {}) });

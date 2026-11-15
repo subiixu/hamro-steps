@@ -3,6 +3,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc } from "./_generated/dataModel";
 import { getMembership, requireMember, requireUser } from "./lib/access";
+import { memberProfile } from "./lib/profile";
 import {
   FEED_MAX_EVENTS,
   FEED_RETENTION_MS,
@@ -41,14 +42,27 @@ export const feed = query({
       if (events.length >= FEED_MAX_EVENTS) break;
     }
 
-    const actors = new Map<string, { userId: Doc<"users">["_id"]; name: string | null; avatarColor: string } | null>();
+    type Actor = {
+      userId: Doc<"users">["_id"];
+      name: string | null;
+      avatarColor: string;
+      photoUrl: string | null;
+      city: string | null;
+      timezone: string | null;
+    };
+    const actors = new Map<string, Actor | null>();
     const result = [];
     for (const e of events) {
       let actor = null;
       if (e.actorId) {
         if (!actors.has(e.actorId)) {
           const u = await ctx.db.get(e.actorId);
-          actors.set(e.actorId, u ? { userId: u._id, name: u.name ?? null, avatarColor: u.avatarColor } : null);
+          actors.set(
+            e.actorId,
+            u
+              ? { userId: u._id, name: u.name ?? null, avatarColor: u.avatarColor, ...(await memberProfile(ctx, u)) }
+              : null,
+          );
         }
         actor = actors.get(e.actorId) ?? null;
       }

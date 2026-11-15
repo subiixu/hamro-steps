@@ -8,11 +8,18 @@ import {
   query,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { requireUser } from "./lib/access";
 import { revokeAppleToken } from "./lib/apple";
-import { deleteUserData } from "./lib/cleanup";
-import { APPLE_REVOKE_RETRY_DELAYS_MS } from "./lib/constants";
+import { deleteBlob, deleteUserData } from "./lib/cleanup";
+import {
+  APPLE_REVOKE_RETRY_DELAYS_MS,
+  MAX_PHOTO_BYTES,
+  ORPHAN_BLOB_AGE_MS,
+  ORPHAN_SWEEP_BATCH,
+} from "./lib/constants";
 import { fail } from "./lib/errors";
+import { checkBirthday, cleanCity, photoUrl } from "./lib/profile";
 import { cleanName } from "./lib/validate";
 
 /**
@@ -43,18 +50,126 @@ export const me = query({
       avatarColor: user.avatarColor,
       timezone: user.timezone ?? null,
       lastSyncedAt: user.lastSyncedAt ?? null,
+      photoUrl: await photoUrl(ctx, user),
+      city: user.city ?? null,
+      birthday: user.birthday ?? null,
     };
   },
 });
 
+/**
+ * Each field may be omitted. `city`: trimmed, max 40, "" clears it.
+ * `birthday`: "YYYY-MM-DD", real, not future, year ≥ 1900; null clears it.
+ */
 export const updateProfile = mutation({
-  args: { name: v.optional(v.string()), timezone: v.optional(v.string()) },
+  args: {
+    name: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    city: v.optional(v.string()),
+    birthday: v.optional(v.union(v.string(), v.null())),
+  },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    const patch: { name?: string; timezone?: string } = {};
+    const patch: { name?: string; timezone?: string; city?: string; birthday?: string } = {};
     if (args.name !== undefined) patch.name = cleanName(args.name);
     if (args.timezone !== undefined) patch.timezone = args.timezone.slice(0, 64);
+    // An `undefined` value in a patch removes the field.
+    if (args.city !== undefined) patch.city = cleanCity(args.city);
+    if (args.birthday !== undefined) {
+      patch.birthday = args.birthday === null ? undefined : checkBirthday(args.birthday, Date.now());
+    }
     await ctx.db.patch(user._id, patch);
+    return null;
+  },
+});
+
+/** Step 1 of a photo change: a one-off upload URL for the image blob. */
+export const generateAvatarUploadUrl = mutation({
+  args: {},
+  handler: async (ctx): Promise<string> => {
+    await requireUser(ctx);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Step 2: make the uploaded blob the user's photo, deleting the old one.
+ * A blob over 5 MB or not `image/*` is rejected (`invalid_photo`); the
+ * hourly orphan sweep deletes it.
+ */
+export const setAvatar = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    if (user.photoId === args.storageId) return null;
+    const meta = await ctx.db.system.get("_storage", args.storageId);
+    if (!meta) fail("invalid_photo");
+    // Never adopt a blob another profile owns: removing or replacing it
+    // later would delete their photo. Nothing is deleted here.
+    const owner = await ctx.db
+      .query("users")
+      .withIndex("by_photoId", (q) => q.eq("photoId", args.storageId))
+      .first();
+    if (owner) fail("invalid_photo");
+    // Throwing rolls back any delete here too, so a rejected blob is left
+    // for `sweepOrphanBlobs` to remove once it's an hour old.
+    if (meta.size > MAX_PHOTO_BYTES || !(meta.contentType ?? "").startsWith("image/")) {
+      fail("invalid_photo");
+    }
+    if (user.photoId) await deleteBlob(ctx, user.photoId);
+    await ctx.db.patch(user._id, { photoId: args.storageId });
+    return null;
+  },
+});
+
+/**
+ * Hourly cron: deletes uploaded blobs over an hour old that no profile
+ * points at (rejected photos, uploads the app abandoned). Walks `_storage`
+ * oldest first in pages, rescheduling itself until it reaches the cutoff.
+ *
+ * Keep-list: profile photos (`users.photoId`) are the only storage use
+ * today. ANY future use of file storage must be added to `isKept` below,
+ * or this sweep will delete those files.
+ */
+export const sweepOrphanBlobs = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())), cutoff: v.optional(v.number()) },
+  handler: async (ctx, args): Promise<{ deleted: number }> => {
+    const cutoff = args.cutoff ?? Date.now() - ORPHAN_BLOB_AGE_MS;
+    const page = await ctx.db.system
+      .query("_storage")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff))
+      .paginate({ numItems: ORPHAN_SWEEP_BATCH, cursor: args.cursor ?? null });
+    const isKept = async (id: Id<"_storage">) =>
+      (await ctx.db
+        .query("users")
+        .withIndex("by_photoId", (q) => q.eq("photoId", id))
+        .first()) !== null;
+    let deleted = 0;
+    for (const blob of page.page) {
+      if (await isKept(blob._id)) continue;
+      await ctx.storage.delete(blob._id);
+      deleted++;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.users.sweepOrphanBlobs, {
+        cursor: page.continueCursor,
+        cutoff,
+      });
+    }
+    if (deleted > 0) console.log(`Deleted ${deleted} orphan storage blobs`);
+    return { deleted };
+  },
+});
+
+/** Deletes the user's photo blob and clears it from the profile. */
+export const removeAvatar = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    if (user.photoId) {
+      await deleteBlob(ctx, user.photoId);
+      await ctx.db.patch(user._id, { photoId: undefined });
+    }
     return null;
   },
 });

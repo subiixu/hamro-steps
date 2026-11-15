@@ -3,6 +3,7 @@ import { query } from "./_generated/server";
 import { familyMembers, requireMember } from "./lib/access";
 import { activeStatus, openWalk } from "./lib/activity";
 import { MAX_MEMBERS } from "./lib/constants";
+import { memberProfile } from "./lib/profile";
 import { nepalDay, nepalDayStart, weekDays } from "./lib/nepalDay";
 import { liveTotal, snapshot, stepsRow } from "./lib/totals";
 
@@ -29,6 +30,8 @@ export const familyToday = query({
         userId: user._id,
         name: user.name ?? null,
         avatarColor: user.avatarColor,
+        ...(await memberProfile(ctx, user)),
+        birthday: user.birthday ?? null,
         position: m.position,
         isOrganiser: family.organiserId === user._id,
         steps: row ? row.steps : null,

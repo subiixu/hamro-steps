@@ -56,7 +56,14 @@ describe("step events", () => {
     for (const f of [f1, f2]) {
       const feed = await feedOf(a, f);
       expect(feed.map((e) => e.type).sort()).toEqual(["member_10k", "member_5k"]);
-      expect(feed[0]!.actor).toEqual({ userId: a.id, name: "Asha", avatarColor: "#E4572E" });
+      expect(feed[0]!.actor).toEqual({
+        userId: a.id,
+        name: "Asha",
+        avatarColor: "#E4572E",
+        photoUrl: null,
+        city: null,
+        timezone: null,
+      });
     }
     expect(await allEvents()).toHaveLength(4);
   });

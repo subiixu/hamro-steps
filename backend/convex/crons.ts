@@ -17,4 +17,8 @@ crons.daily("purge old walks", { hourUTC: 19, minuteUTC: 45 }, internal.walks.pu
 // Evening nudge at 19:00 Nepal (UTC+5:45) = 13:15 UTC.
 crons.cron("evening nudge", "15 13 * * *", internal.notifications.eveningNudge, {});
 
+// Uploaded files no profile points at (rejected or abandoned photo uploads),
+// once over an hour old. See users.sweepOrphanBlobs for the keep-list.
+crons.hourly("sweep orphan storage blobs", { minuteUTC: 50 }, internal.users.sweepOrphanBlobs, {});
+
 export default crons;
