@@ -23,6 +23,7 @@ import type * as lib_constants from "../lib/constants.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_feed from "../lib/feed.js";
 import type * as lib_nepalDay from "../lib/nepalDay.js";
+import type * as lib_profile from "../lib/profile.js";
 import type * as lib_push from "../lib/push.js";
 import type * as lib_tokens from "../lib/tokens.js";
 import type * as lib_totals from "../lib/totals.js";
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   "lib/feed": typeof lib_feed;
   "lib/nepalDay": typeof lib_nepalDay;
+  "lib/profile": typeof lib_profile;
   "lib/push": typeof lib_push;
   "lib/tokens": typeof lib_tokens;
   "lib/totals": typeof lib_totals;

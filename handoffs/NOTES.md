@@ -10,3 +10,4 @@
 - Apple Developer team ID: JQ2D4NNS3B <!-- from 63 · 2026-11-14T14:46 -->
 - Old team APNs key QS2J5JQ7W5 deleted by user; new key 4L75BC2Z4S <!-- from 90 · 2026-11-14T15:23 -->
 - Privacy contact email: bixustudio@gmail.com. Draft privacy policy approved by the user. <!-- from 95 · 2026-11-14T15:31 -->
+- Profile avatars are photos only (no colour picker); location means a typed city plus local time shown to family (no device location, no GPS); profile also has an optional birthday <!-- from 189 · 2026-11-15T18:12 -->
