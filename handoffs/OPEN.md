@@ -15,10 +15,10 @@ Usage band: green (5h 5% used, 18:41)
 - TestFlight 0.1.0 (6) archived 2026-11-15: full redesign + Shared Stride icon (supersedes 3–5). Upload from Xcode Organizer is the user's; then add family as testers.
 - manual test (privacy link): on a phone, tap "Privacy policy" on Welcome and on Me → Safari opens the privacy page; check the Me row looks right (not seen on screen yet).
 - manual test (web pages): open web/invite/index.html?code=K7M2QX and web/privacy/index.html in Safari; check dark mode; founders review the DRAFT privacy text + set real contact email and TestFlight URL.
+- manual test (T-39 profile, needs a new build): Me › Edit profile: choose a photo from your library, take one with the camera, remove it; set Lives in + birthday, Save. On a 2nd phone, tap that person on Home: photo, city · their local time, birthday (no year). Backend is live on dev.
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-- 2026-11-15 18:41 · claude/claude-opus-5-5 medium · term s_20564e20 · handoffs/briefs/2026-11-15-1843-profile-photo-account-guard.md
 <!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `jarvis merge` removes the line -->
 
