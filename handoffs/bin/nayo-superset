@@ -1,146 +1,103 @@
 #!/usr/bin/env bash
-# jarvis — the routine steps of the Jarvis workflow, one command each, so the
+# nayo — the routine steps of the Nayo workflow, one command each, so the
 # coordinator spends its turns on judgement instead of bookkeeping.
+# This is the Superset host's script; handoffs/bin/nayo picks it or nayo-araniko.
 #
-#   jarvis start                       claim this session as Jarvis in OPEN.md, then status
-#   jarvis status                      band, workers, new handoffs, git — one short screen
-#   jarvis spawn <brief.md> [--after <handoff> | --redo <handoff> [--why "<line>"]] [--force]
+#   nayo start                       claim this terminal as Nayo in OPEN.md, then status
+#   nayo status                      band, workers, new handoffs, git — one short screen
+#   nayo spawn <brief.md> [--after <handoff> | --redo <handoff> [--why "<line>"]] [--force]
 #                [--isolate [--no-terminal]]
-#                                      lint, enforce the band and the worker cap, spawn, record
+#                                      lint, enforce the band and the Claude cap, spawn, record
 #                                      (--after: the next phase; --redo: sent back after review,
 #                                      --why: the reason, written as why: in the brief's header;
 #                                      --isolate or `isolate: yes` in the header: the worker gets
 #                                      its own git worktree on branch jw/<slug>; --no-terminal
 #                                      makes the worktree without starting a worker; refuses, without
 #                                      --force, a non-isolated brief whose files: overlap a running
-#                                      non-isolated worker's; passes a fixed --request-id, so a
-#                                      retried spawn never starts a second worker)
-#                [--answers <file> [--blocked <handoff>] [--settled]]
-#                                      (--answers: a fresh worker on an answered brief: appends
-#                                      the answers and the blocked handoff to the brief, closes
-#                                      the old worker; --settled: the answers settle the design,
-#                                      so model: fable becomes claude-opus-5-5)
-#   jarvis answer <blocked-handoff.md> <answers-file> [--settled] [--fresh]
-#                                      answer a blocked worker: typed into it while its context is
-#                                      at most 80k tokens (JARVIS_FRESH_AFTER), else (--fresh, or the
-#                                      worker is gone) spawn --answers: a fresh worker on the brief
-#   jarvis merge <handoff.md> --check  file list vs git status, diff stat, checks; changes nothing
-#   jarvis merge <handoff.md> [-m <msg>] [--outcome <o>] [--no-push] [--keep-open] [--force]
+#                                      non-isolated worker's; a retried spawn finds the session the
+#                                      first try started in handoffs/.nayo/requests/ instead of
+#                                      starting a second)
+#   nayo merge <handoff.md> --check  file list vs git status, diff stat, checks; changes nothing
+#   nayo merge <handoff.md> [-m <msg>] [--outcome <o>] [--no-push] [--keep-open] [--force]
 #                [--skip-second-opinion "<reason>"]  (merge without the second opinion the
 #                                      project's policy wants; logged in the handoff)
-#                [--anyway "<reason>"] (merge despite red checks; logged in the handoff)
+#                [--anyway "<reason>"] (merge despite the red checks Araniko ran on the
+#                                      handoff; logged in the handoff; --force doesn't)
 #                                      commit exactly the listed files + the handoff move,
-#                                      push, close the worker, update OPEN.md; refuses red
-#                                      checks (Ultron's run on the handoff, else the brief's
-#                                      last `ultron check`; --force doesn't override them)
-#                                      (isolated: commit on jw/<slug>, git merge it here; a
-#                                      conflict writes a merge brief and changes nothing here)
-#   jarvis clean-worktrees             remove isolated worktrees + jw/* branches whose handoff
+#                                      push, close the worker, update OPEN.md (isolated: commit
+#                                      on jw/<slug>, git merge it here; a conflict writes a
+#                                      merge brief and changes nothing here)
+#   nayo clean-worktrees             remove isolated worktrees + jw/* branches whose handoff
 #                                      is merged and no worker is running; list the rest
-#   jarvis events                      one "[jarvis event] …" line per handoff or worker trouble,
-#                                      until killed: Jarvis runs it under Claude Code's Monitor tool
-#
-# A branch Jarvis (in a worktree: $ULTRON_WORKTREE_ID is set) has its own OPEN.md, workers,
-# worker cap and events; its merges commit to its branch and push that branch.
-#   jarvis band                        the usage band from the latest statusline reading
-#   jarvis screen <session> [lines]    a session's screen, or a chat session's conversation (jev.sh uses it)
-#   jarvis usage [--days N | --since DATE]
+#   nayo events                      one "[nayo event] …" line per handoff or worker trouble,
+#                                      until killed: Nayo runs it under Claude Code's Monitor tool
+#   nayo band                        the usage band from the latest statusline reading
+#   nayo read <terminal> [lines]     a terminal's screen (also: nayo screen)
+#   nayo send <terminal> "<text>"    type it into a worker and press Enter; exits non-zero when
+#                                      Superset says it was typed but not submitted
+#   nayo send <terminal> --keys enter press Enter alone (after a "not submitted"; then nayo read)
+#   nayo close <terminal>            close a terminal: prints "closed <full id>" or Superset's error
+#                                      (any <terminal> may be a unique prefix of a running id,
+#                                      6+ characters)
+#   nayo usage [--days N | --since DATE]
 #                                      coordinating vs building, from local transcripts
-#   jarvis hook prompt                 UserPromptSubmit guard (from .claude/settings.json)
-#   jarvis statusline                  statusline tap: saves the 5-hour reading, then runs yours
+#   nayo hook prompt                 UserPromptSubmit guard (from .claude/settings.json)
+#   nayo statusline                  statusline tap: saves the 5-hour reading, then runs yours
 #
-# Settings live in handoffs/jarvis.conf. Works on the stock macOS bash (3.2).
+# Settings live in handoffs/nayo.conf. Works on the stock macOS bash (3.2).
 # jq is needed for spawn, the hooks and the band; everything fails open without it.
-# Sessions are driven through the `ultron` CLI. Ported from jarvis 0.3.1 (MIT, Gorock);
-# PORTING.md in the Ultron repo's kits/jarvis/ lists what changed and what the CLI still lacks.
-# This is the Ultron host's script; handoffs/bin/jarvis picks it or jarvis-superset. Both
-# share OPEN.md, and each leaves alone a Jarvis of the other host (Superset ids are UUIDs).
 set -u
+
+# Nayo was called Jarvis before 2026-11-15. A JARVIS_* in the environment still counts
+# where no NAYO_* of the same name is set. TODO(remove after first public release)
+for v in $(env | sed -n 's/^JARVIS_\([A-Z0-9_]*\)=.*/\1/p'); do
+  eval "[ -n \"\${NAYO_$v+x}\" ] || export NAYO_$v=\"\$JARVIS_$v\""
+done
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
 cd "$ROOT" || exit 0
 H=handoffs
 OPEN="$H/OPEN.md"
-STATE="$H/.jarvis"
+STATE="$H/.nayo"
 BIN="$H/bin"
 
-JARVIS_MAX_CLAUDE=3      # Claude sessions at once, Jarvis included; only when ultron has no workers.max setting
-JARVIS_AMBER=50          # 5-hour % that turns the band amber
-JARVIS_RED=75            # 5-hour % that turns it red
-JARVIS_FRESH_AFTER=80000 # a blocked worker over this context gets its answers as a fresh worker
-JARVIS_IDLE_MIN=55       # minutes idle after which a big context is cheaper to clear than reload
-JARVIS_GUARD_TOKENS=100000
-JARVIS_PUSH=1
-# shellcheck disable=SC1090
-[ -f "$H/jarvis.conf" ] && . "$H/jarvis.conf"
-# Ultron injects these into every session it starts (docs/architecture.md §4.3).
-ME="${ULTRON_SESSION_ID:-}"
-# Set in a worktree: this is a branch Jarvis, and its workers run here too.
-WT="${ULTRON_WORKTREE_ID:-}"
-# Isolated workers' worktrees: outside the repo and outside ~/.ultron, since Ultron lists a
-# project's worktrees as branch Jarvises. Their cargo builds share one target/ here.
-WT_ROOT="${JARVIS_WT_ROOT:-$HOME/.jarvis-worktrees}"
+NAYO_MAX_CLAUDE=3      # Claude sessions at once, Nayo included; Codex/OpenCode/Grok don't count
+NAYO_AMBER=50          # 5-hour % that turns the band amber
+NAYO_RED=75            # 5-hour % that turns it red
+NAYO_IDLE_MIN=55       # minutes idle after which a big context is cheaper to clear than reload
+NAYO_GUARD_TOKENS=100000
+NAYO_PUSH=1
+# A project set up before the rename has handoffs/jarvis.conf (JARVIS_* names) until
+# setup runs again. nayo.conf wins when both are there; they're never merged.
+# TODO(remove after first public release)
+if [ -f "$H/nayo.conf" ]; then
+  [ -f "$H/jarvis.conf" ] && echo "nayo: using handoffs/nayo.conf (handoffs/jarvis.conf is ignored)" >&2
+  # shellcheck disable=SC1090
+  . "$H/nayo.conf"
+elif [ -f "$H/jarvis.conf" ]; then
+  # shellcheck disable=SC1090
+  . "$H/jarvis.conf"
+  for v in $(sed -n 's/^[[:space:]]*JARVIS_\([A-Z0-9_]*\)=.*/\1/p' "$H/jarvis.conf"); do
+    eval "NAYO_$v=\"\$JARVIS_$v\""
+  done
+fi
+WS="${SUPERSET_WORKSPACE_ID:-}"
+# Isolated workers' worktrees: outside the repo and outside ~/.araniko, since Araniko lists a
+# project's worktrees as branch Nayos. Their cargo builds share one target/ here.
+WT_ROOT="${NAYO_WT_ROOT:-$HOME/.nayo-worktrees}"
 
-die() { echo "jarvis: $*" >&2; exit 1; }
+LIMIT_RE="(usage|rate|session|weekly|daily|hourly|5-hour) limit (was |has been )?(reached|exceeded|hit)|(hit|reached|exceeded) (your|the) [a-z0-9 -]*limit|limit reached|quota (was |has been )?(exceeded|exhausted)|out of credits|too many requests"
+
+die() { echo "nayo: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 now() { date +%s; }
 short() { printf '%s' "$1" | cut -c1-8; }
 mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
-need_ultron() { have ultron || die "the ultron CLI is not on PATH — start Ultron, or add ~/.ultron/bin to PATH"; }
-
-# ---------------------------------------------------------------- ultron
-
-# The transport of session $1: `pty`, or `stream` for a chat session (Claude in
-# stream-json mode: Jarvis and Vision by default). `pty` when the daemon doesn't say.
-transport_of() {
-  local t=""
-  have jq && t=$(ultron term get "$1" --json 2>/dev/null | jq -r '.transport // empty' 2>/dev/null)
-  echo "${t:-pty}"
-}
-
-# Whether this `ultron` has the `chat` commands. Without them, `term read|send`
-# still reach a stream session (the daemon routes them), just less exactly.
-have_chat() { ultron chat --help >/dev/null 2>&1; }
-
-# A chat session's `chat history --json` as screen-like text, the way the
-# daemon renders it for `term read`.
-CHAT_TEXT='.events[]? | .data as $d | .kind as $k
-  | def one: tostring | gsub("\\s+"; " ") | if length > 100 then .[0:100] + "…" else . end;
-  if $k == "user_message" then ($d.text // "" | split("\n")[] | "> " + .)
-  elif $k == "assistant_message" then ($d.text // "")
-  elif $k == "tool_use" then "[tool \($d.name // "?")] \($d.input | one)"
-  elif $k == "tool_result" then "[\(if $d.is_error == true then "error" else "result" end)] \($d.output // "" | one)"
-  elif $k == "turn_finished" then "[turn \($d.subtype // "")]"
-  elif $k == "restarted" then (if $d.resume == true then "[resumed]" else "[cleared]" end)
-  elif $k == "stderr" then "! \($d.line // "")"
-  elif $k == "exited" then "[exited \($d.code)]"
-  else empty end'
-
-# The screen of session $1, last $2 lines, as plain text. A chat session has no
-# screen: its conversation from `chat history` stands in.
-screen() {
-  local out
-  if [ "$(transport_of "$1")" = stream ] && have jq && have_chat; then
-    out=$(ultron chat history "$1" --limit 200 --json 2>/dev/null | jq -r "$CHAT_TEXT" 2>/dev/null)
-    [ -n "$out" ] && { printf '%s\n' "$out" | tail -n "$2"; return; }
-  fi
-  ultron term read "$1" --max-lines "$2" --json 2>/dev/null \
-    | { have jq && jq -r '.screen // empty' || cat; }
-}
-
-# The state of session $1 (starting|working|idle|waiting_on_user|limit_hit|exited|failed),
-# from a `term list --all` array in $2. Empty when the daemon doesn't know it.
-session_state() {
-  have jq || return 0
-  printf '%s' "$2" | jq -r --arg id "$1" '.[]? | select(.id == $id) | .state // empty' 2>/dev/null | head -n 1
-}
-
-live_sessions() { ultron term list --all --json 2>/dev/null || echo '[]'; }
 
 # ---------------------------------------------------------------- OPEN.md
 
-jarvis_terminal() {
-  sed -n 's/^Jarvis session:[[:space:]]*//p' "$OPEN" 2>/dev/null | head -n 1 | awk '{print $1}' | grep -v '^<' || true
+nayo_terminal() {
+  sed -n -E 's/^(Nayo|Jarvis) session:[[:space:]]*//p' "$OPEN" 2>/dev/null | head -n 1 | awk '{print $1}' | grep -v '^<' || true
 }
 
 # "- <when> · <agent>/<model> <effort> · term <id> · <brief> · <slug>"
@@ -148,44 +105,16 @@ running_lines() {
   awk '/^## /{on = ($0 ~ /^## Running workers/); next} on && /^- /' "$OPEN" 2>/dev/null
 }
 
-claude_sessions() { # Jarvis plus every running Claude worker
-  echo $(( $(running_lines | grep -c '· claude/') + 1 ))
-}
-
-# The user's cap on workers (Ultron's Settings, `ultron settings get workers.max`), read
-# on every call so a change applies to the next spawn. Empty when this ultron has no
-# settings (an older daemon): JARVIS_MAX_CLAUDE applies instead.
-# The user's default model or effort for a Claude worker (Ultron's Settings → Jarvis:
-# workers.model, workers.effort), for a brief that names none. Empty on an older daemon.
+# The user's default model or effort for a Claude worker (Araniko's Settings → Nayo:
+# workers.model, workers.effort), for a brief that names none. Empty without an araniko
+# CLI or on an older daemon. Same rule as nayo-araniko's.
 worker_default() { # <model|effort>
-  have jq && have ultron || return 0
-  ultron settings get "workers.$1" --json 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true
+  have jq && have araniko || return 0
+  araniko settings get "workers.$1" --json 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true
 }
 
-workers_max() {
-  have jq && have ultron || return 0
-  ultron settings get workers.max --json 2>/dev/null | jq -r '.value // empty' 2>/dev/null | grep -E '^[0-9]+$' || true
-}
-
-# Live worker sessions of this Jarvis, any agent (Claude, Codex, OpenCode): in this
-# project and in this checkout (the main one, or this branch Jarvis's worktree); Jarvis
-# isn't one. Empty when the daemon can't be asked.
-live_workers() {
-  have jq && have ultron || return 0
-  ultron term list --role worker ${ULTRON_PROJECT_ID:+--project "$ULTRON_PROJECT_ID"} --json 2>/dev/null \
-    | jq -r --arg wt "$WT" 'if type == "array" then [.[] | select((.worktree // "") == $wt)] | length else empty end' 2>/dev/null
-}
-
-# The status line's cap: "workers: N of M", or the Claude count without a workers.max.
-cap_line() {
-  local max now
-  max=$(workers_max)
-  [ -n "$max" ] && now=$(live_workers)
-  if [ -n "$max" ] && [ -n "$now" ]; then
-    printf 'workers: %s of %s\n' "$now" "$max"
-  else
-    printf 'claude sessions: %s of %s (Jarvis included)\n' "$(claude_sessions)" "$JARVIS_MAX_CLAUDE"
-  fi
+claude_sessions() { # Nayo plus every running Claude worker
+  echo $(( $(running_lines | grep -c '· claude/') + 1 ))
 }
 
 open_add_running() { # $1 = line
@@ -198,9 +127,10 @@ open_drop() { # drop list items that mention $1
   awk -v k="$1" '!(/^- / && index($0, k))' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
 }
 
-open_set() { # $1 = "Jarvis session" | "Usage band", $2 = value
+open_set() { # $1 = "Nayo session" | "Usage band", $2 = value
   local tmp; tmp=$(mktemp) || return 1
-  awk -v k="$1" -v v="$2" 'index($0, k ":") == 1 {print k ": " v; next} {print}' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
+  # An OPEN.md from before the rename says "Jarvis session:"; that line becomes "Nayo session:".
+  awk -v k="$1" -v v="$2" 'index($0, k ":") == 1 || (k == "Nayo session" && index($0, "Jarvis session:") == 1) {print k ": " v; next} {print}' "$OPEN" > "$tmp" && mv "$tmp" "$OPEN"
 }
 
 field() { # $1 = key, $2 = file: "key: value" from a brief header or handoff
@@ -209,13 +139,13 @@ field() { # $1 = key, $2 = file: "key: value" from a brief header or handoff
 
 # ---------------------------------------------------------------- band
 
-# Prints "<band>\t<one-line explanation>". The reading comes from `jarvis statusline`,
+# Prints "<band>\t<one-line explanation>". The reading comes from `nayo statusline`,
 # which Claude Code feeds its own 5-hour and 7-day rate-limit numbers.
 band() {
   local f="$STATE/usage.json"
   have jq || { printf 'unknown\tjq not installed\n'; return; }
   [ -s "$f" ] || { printf 'unknown\tno statusline reading yet — check `/usage` and write the band by hand\n'; return; }
-  jq -r --argjson now "$(now)" --argjson amber "$JARVIS_AMBER" --argjson red "$JARVIS_RED" '
+  jq -r --argjson now "$(now)" --argjson amber "$NAYO_AMBER" --argjson red "$NAYO_RED" '
     def hm: (. / 60 | floor) as $m | "\($m / 60 | floor)h\($m % 60 | tostring | if length < 2 then "0" + . else . end)m";
     (.five_hour.used_percentage // null) as $u
     | (.five_hour.resets_at // null) as $r
@@ -240,89 +170,84 @@ cmd_band() { band | tr '\t' ' '; }
 
 # ---------------------------------------------------------------- start / status
 
-# Whether session id $1 is Ultron's (s_…). Anything else in OPEN.md is a Superset terminal.
-ours() { case "$1" in s_*) return 0 ;; *) return 1 ;; esac; }
-
-# Superset terminal $1: 0 if it's still open, 1 if not, 2 if Superset can't be asked.
-# Ultron strips SUPERSET_* from its sessions, and the superset CLI needs the workspace and
-# the organization, so the Superset script's `start` leaves them in $STATE/superset.host.
-superset_open() {
-  local ws org list
-  have superset || return 2
-  ws=$(sed -n 's/^workspace=//p' "$STATE/superset.host" 2>/dev/null)
-  org=$(sed -n 's/^organization=//p' "$STATE/superset.host" 2>/dev/null)
-  ws="${SUPERSET_WORKSPACE_ID:-$ws}"; org="${SUPERSET_ORGANIZATION_ID:-$org}"
-  [ -n "$ws" ] || return 2
-  list=$(env ${org:+SUPERSET_ORGANIZATION_ID="$org"} superset terminals list --workspace "$ws" --json 2>/dev/null) || return 2
-  printf '%s' "$list" | grep -q "$1"
+# Araniko session $1: 0 if it's still open, 1 if not, 2 if the daemon can't be asked.
+araniko_open() {
+  local u list st
+  u=$(command -v araniko 2>/dev/null) || u="${ARANIKO_HOME:-$HOME/.araniko}/bin/araniko"
+  [ -x "$u" ] && have jq || return 2
+  # no daemon, no sessions (and `term list` would start one)
+  list=$("$u" daemon status --json 2>/dev/null) || return 2
+  printf '%s' "$list" | grep -q '"pid"' || return 1
+  list=$("$u" term list --all --json 2>/dev/null) || return 2
+  st=$(printf '%s' "$list" | jq -r --arg id "$1" '.[]? | select(.id == $id) | .state // empty' 2>/dev/null | head -n 1)
+  case "$st" in ""|exited|failed) return 1 ;; *) return 0 ;; esac
 }
 
-# Running-worker lines whose terminal isn't this Jarvis's: an Ultron session that's gone
-# from the daemon or runs in another checkout (a fresh branch Jarvis's OPEN.md came from
-# main's), or, for a branch Jarvis, a Superset terminal. Prints what it drops.
-drop_foreign_workers() { # $1 = live_sessions JSON
-  local line id wt
-  have jq || return 0
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    id=$(printf '%s' "$line" | sed -n 's/.*term \([^ ]*\).*/\1/p')
-    [ -n "$id" ] || continue
-    if ours "$id"; then
-      wt=$(printf '%s' "$1" | jq -r --arg id "$id" '[.[]? | select(.id == $id)] | if length == 0 then "@gone" else (.[0].worktree // "") end' 2>/dev/null) || continue
-      [ "$wt" = "$WT" ] && continue
+# Superset terminal $1: prints "<name> (<id>)" of the first workspace on this checkout
+# where it's still running, or nothing. Looks at every workspace whose path is this
+# checkout (plus $WS), not just this one: on 2026-10-20 a second Nayo in another
+# workspace took over the line. Superset unreachable → falls back to $WS alone.
+superset_alive_in() {
+  local id="$1" here wss ws name sessions
+  have superset || return 0
+  here=$(cd "$ROOT" 2>/dev/null && pwd -P) || here="$ROOT"
+  wss=""
+  if have jq && sessions=$(superset workspaces list --json 2>/dev/null); then
+    wss=$(printf '%s' "$sessions" | jq -r --arg here "$here" --arg ws "$WS" '
+      .[]? | select(.archivedAt == null)
+      | select(.id == $ws or .worktreePath == null
+               or ((.worktreePath | sub("/+$"; "")) == $here))
+      | "\(.id)\t\(.name // "")"' 2>/dev/null)
+  fi
+  [ -n "$wss" ] || { [ -n "$WS" ] && wss=$(printf '%s\t%s' "$WS" "this one"); }
+  while IFS="$(printf '\t')" read -r ws name; do
+    [ -n "$ws" ] || continue
+    sessions=$(superset terminals list --workspace "$ws" --json 2>/dev/null) || continue
+    if have jq; then
+      printf '%s' "$sessions" | jq -e --arg id "$id" \
+        '[.sessions[]? | select(.terminalId == $id and (.exited | not))] | length > 0' >/dev/null 2>&1 \
+        || continue
     else
-      [ -n "$WT" ] || continue
+      printf '%s' "$sessions" | grep -q "$id" || continue
     fi
-    open_drop "term $id"
-    echo "dropped from Running workers (not this Jarvis's): $line"
+    printf '%s (%s)\n' "${name:-?}" "$ws"
+    return 0
   done <<EOF
-$(running_lines)
+$wss
 EOF
 }
 
 cmd_start() {
-  local old live oldwt
-  [ -f "$OPEN" ] || die "no $OPEN — run ultron-jarvis:setup first"
-  [ -n "$ME" ] || die "ULTRON_SESSION_ID not set — run Jarvis in an Ultron session (ultron agent spawn --role jarvis …)"
-  need_ultron
-  live=$(live_sessions)
-  old=$(jarvis_terminal)
-  # A Jarvis of another checkout (main's, in the OPEN.md a new worktree copied) isn't ours to wait on.
-  if [ -n "$old" ] && ours "$old" && have jq; then
-    oldwt=$(printf '%s' "$live" | jq -r --arg id "$old" '.[]? | select(.id == $id) | .worktree // ""' 2>/dev/null | head -n 1)
-    [ "$oldwt" = "$WT" ] || old=""
-  elif [ -n "$old" ] && [ -n "$WT" ]; then
-    old=""
-  fi
-  if [ -n "$old" ] && [ "$old" != "$ME" ] && [ "${1:-}" != --force ]; then
-    if ours "$old"; then
-      case "$(session_state "$old" "$live")" in
-        ""|exited|failed) ;;
-        *) die "another Jarvis ($old) is still open — ask the user, then: jarvis start --force" ;;
-      esac
-    else
-      superset_open "$old"
-      case $? in
-        0) die "another Jarvis ($old, in Superset) is still open — ask the user, then: jarvis start --force" ;;
-        2) die "can't check whether the Superset Jarvis ($old) is still open (no superset CLI, or Superset didn't answer) — ask the user, then: jarvis start --force" ;;
-      esac
-    fi
-  fi
-  open_set "Jarvis session" "$ME"
-  drop_foreign_workers "$live"
+  local me old where
+  me="${SUPERSET_TERMINAL_ID:-}"
+  [ -f "$OPEN" ] || die "no $OPEN — run nayo:setup first"
+  [ -n "$me" ] || die "SUPERSET_TERMINAL_ID not set — run Nayo in a Superset terminal"
+  old=$(nayo_terminal)
+  case "$old" in
+    s_*) # a Nayo in Araniko (its ids are s_…): ask its daemon
+      if [ "${1:-}" != --force ]; then
+        araniko_open "$old"
+        case $? in
+          0) die "another Nayo ($old, in Araniko) is still open — ask the user, then: nayo start --force" ;;
+          2) die "can't check whether the Araniko Nayo ($old) is still open (araniko not reachable) — ask the user, then: nayo start --force" ;;
+        esac
+      fi ;;
+    *)
+      if [ -n "$old" ] && [ "$old" != "$me" ] && [ "${1:-}" != --force ]; then
+        where=$(superset_alive_in "$old")
+        [ -n "$where" ] && die "another Nayo ($old) is still open in Superset workspace $where — ask the user, then: nayo start --force"
+      fi ;;
+  esac
+  open_set "Nayo session" "$me"
   mkdir -p "$STATE"
-  # A chat Jarvis outside bypassPermissions has nobody to ask, so its bash calls get refused.
-  if have jq && ultron term get "$ME" --json 2>/dev/null | jq -e '.transport == "stream"
-       and ((.command // []) | index(["--permission-mode", "bypassPermissions"]) == null)' >/dev/null 2>&1; then
-    echo "warning: this Jarvis is a chat session without --permission-mode bypassPermissions, so tool calls"
-    echo "  needing approval are refused. Respawn it with that flag (the setup skill's spawn line has it)."
-  fi
+  # for nayo-araniko's "still open?" check: Araniko strips SUPERSET_* from its sessions
+  printf 'workspace=%s\norganization=%s\n' "$WS" "${SUPERSET_ORGANIZATION_ID:-}" > "$STATE/superset.host"
   cmd_status
 }
 
 cmd_status() {
-  local b line id brief ho ids="" n=0 changed claimed unclaimed live="[]" st
-  [ -f "$OPEN" ] || die "no $OPEN — run ultron-jarvis:setup first"
+  local b line id brief ho ids="" n=0 changed claimed unclaimed
+  [ -f "$OPEN" ] || die "no $OPEN — run nayo:setup first"
 
   b=$(band)
   printf 'band: %s\n' "$(printf '%s' "$b" | tr '\t' ' ' | sed 's/ /: /')"
@@ -330,11 +255,9 @@ cmd_status() {
     green|amber|red) open_set "Usage band" "$(printf '%s' "$b" | cut -f1) ($(printf '%s' "$b" | cut -f2 | cut -d, -f1), $(date +%H:%M))" ;;
   esac
 
-  have ultron && live=$(live_sessions)
-  [ -n "$WT" ] && printf 'branch: %s (worktree %s): commit here; ship to main only when the user says (JARVIS.md, Branch Jarvis)\n' \
-    "$(git branch --show-current 2>/dev/null || echo '?')" "$WT"
-  echo "events: arm Monitor on handoffs/bin/jarvis events"
-  cap_line
+  disk_warn
+  echo "events: arm Monitor on handoffs/bin/nayo events"
+  printf 'claude sessions: %s of %s (Nayo included)\n' "$(claude_sessions)" "$NAYO_MAX_CLAUDE"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     n=$((n + 1))
@@ -342,8 +265,7 @@ cmd_status() {
     brief=$(printf '%s' "$line" | grep -o "$H/briefs/[^ ]*\.md" | head -n 1)
     ho=""
     [ -n "$brief" ] && ho=$(grep -l "^brief:[[:space:]]*$brief" "$H"/*.md 2>/dev/null | head -n 1)
-    st=$(session_state "$id" "$live")
-    printf '  %s %s %s [%s]' "$(short "$id")" "$(printf '%s' "$line" | awk -F' · ' '{print $2}')" "$(basename "${brief:-?}" .md)" "${st:-gone}"
+    printf '  %s %s %s' "$(short "$id")" "$(printf '%s' "$line" | awk -F' · ' '{print $2}')" "$(basename "${brief:-?}" .md)"
     if [ -n "$ho" ]; then printf '  → %s (%s)\n' "$ho" "$(field status "$ho")"; else echo; fi
     iso_status "$line"
     [ -n "$id" ] && [ -z "$ho" ] && ids="$ids $id"
@@ -357,13 +279,12 @@ EOF
     if [ -x "$BIN/jev.sh" ]; then
       # shellcheck disable=SC2086
       "$BIN/jev.sh" triage $ids 2>/dev/null | sed 's/^/  /'
-    elif have ultron; then
+    else
       for id in $ids; do
         printf '  %s\n' "$(short "$id")"
-        screen "$id" 40 | sed -e 's/[[:space:]]*$//' | grep -v '^$' | tail -n 4 | sed 's/^/      /'
+        superset terminals read --workspace "$WS" --terminal "$id" --max-lines 40 --json 2>/dev/null \
+          | { have jq && jq -r '.text // empty' || cat; } | sed -e 's/[[:space:]]*$//' | grep -v '^$' | tail -n 4 | sed 's/^/      /'
       done
-    else
-      echo "  (ultron not on PATH — can't read their screens)"
     fi
   fi
 
@@ -386,12 +307,11 @@ EOF
   q=$(awk '/^## /{on = ($0 ~ /^## Questions for the user/); next} on && /^- /' "$OPEN" | wc -l | tr -d ' ')
   printf 'OPEN.md: %s question(s) for the user · %s to-do\n' "$q" "$n"
   finished_todos
-  unbriefed_tasks
 }
 
 # For `status`: To-do lines that look finished ("shipped", "merged", "done",
 # "dropped", "retired", "reverted", or a commit sha in parentheses). To-do holds
-# only work not done yet (JARVIS.md, "What goes in OPEN.md"). Five at most.
+# only work not done yet (NAYO.md, "What goes in OPEN.md"). Five at most.
 finished_todos() {
   local line w=0
   while IFS= read -r line; do
@@ -414,15 +334,15 @@ EOF
 
 # ---------------------------------------------------------------- libraries
 
-# Every brief gets `## Libraries and design rules`: what `ultron knowledge show`
+# Every brief gets `## Libraries and design rules`: what `araniko knowledge show`
 # says for this project (the user's libraries, design rules), so workers follow
-# them too, not only Jarvis. Never blocks a spawn: a missing ultron, an error or
+# them too, not only Nayo. Never blocks a spawn: a missing araniko, an error or
 # a slow daemon leaves one "(knowledge unavailable: …)" line instead.
 KNOWLEDGE_SEC=5
 
-ultron_cli() { # on PATH, else ~/.ultron/bin/ultron
-  if have ultron; then command -v ultron
-  elif [ -x "$HOME/.ultron/bin/ultron" ]; then echo "$HOME/.ultron/bin/ultron"
+araniko_cli() { # on PATH, else ~/.araniko/bin/araniko
+  if have araniko; then command -v araniko
+  elif [ -x "$HOME/.araniko/bin/araniko" ]; then echo "$HOME/.araniko/bin/araniko"
   else return 1; fi
 }
 
@@ -438,22 +358,22 @@ time_boxed() {
   return $rc
 }
 
-one_line() { # the daemon's error from ultron's output $1, else its first line
+one_line() { # the daemon's error from araniko's output $1, else its first line
   local e
   e=$(printf '%s' "$1" | jq -r '.error // empty' 2>/dev/null)
   [ -n "$e" ] || e=$(printf '%s\n' "$1" | sed -n '/[^[:space:]]/{p;q;}')
   printf '%s' "${e:-no output}" | cut -c1-160
 }
 
-knowledge_fetch() { # $1 = the ultron CLI, $2 = the project id (empty: look it up)
+knowledge_fetch() { # $1 = the araniko CLI, $2 = the project id (empty: look it up)
   local u=$1 proj=${2:-} out
   if [ -z "$proj" ]; then
     out=$("$u" project get --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
     proj=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
-    [ -n "$proj" ] || { echo "(knowledge unavailable: no project id from ultron project get)"; return 0; }
+    [ -n "$proj" ] || { echo "(knowledge unavailable: no project id from araniko project get)"; return 0; }
   fi
   out=$("$u" knowledge show --project "$proj" --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
-  out=$(printf '%s' "$out" | jq -r '.text // empty' 2>/dev/null) || { echo "(knowledge unavailable: unreadable output from ultron knowledge show)"; return 0; }
+  out=$(printf '%s' "$out" | jq -r '.text // empty' 2>/dev/null) || { echo "(knowledge unavailable: unreadable output from araniko knowledge show)"; return 0; }
   [ -n "$out" ] || out="(no shared knowledge applies to this project)"
   printf '%s\n' "$out"
 }
@@ -462,20 +382,20 @@ knowledge_fetch() { # $1 = the ultron CLI, $2 = the project id (empty: look it u
 # replacing that section if it's there: after `## Context`, else before
 # `## Scope`, else at the end. Its own headings are pushed down two levels so
 # they can't end the section.
-stamp_knowledge() { # $1 = brief, $2 = the project id (empty: ultron project get)
+stamp_knowledge() { # $1 = brief, $2 = the project id (empty: araniko project get)
   local brief=$1 u tmp
-  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-kn.XXXXXX") || return 0
-  if ! u=$(ultron_cli); then
-    echo "(knowledge unavailable: ultron not found)" > "$tmp"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/nayo-kn.XXXXXX") || return 0
+  if ! u=$(araniko_cli); then
+    echo "(knowledge unavailable: araniko not found)" > "$tmp"
   elif ! time_boxed "$KNOWLEDGE_SEC" knowledge_fetch "$u" "${2:-}" > "$tmp" 2>/dev/null || [ ! -s "$tmp" ]; then
-    echo "(knowledge unavailable: ultron didn't answer within ${KNOWLEDGE_SEC} s)" > "$tmp"
+    echo "(knowledge unavailable: araniko didn't answer within ${KNOWLEDGE_SEC} s)" > "$tmp"
   fi
   sed -E 's/^(#+[[:space:]])/##\1/' "$tmp" > "$tmp.md"
   awk -v hasctx="$(grep -c '^## Context' "$brief")" '
     FNR == NR { kn = kn $0 "\n"; next }
     function emit() {
       if (done) return
-      printf "## Libraries and design rules\n<!-- written by jarvis spawn from `ultron knowledge show`; replaced on every spawn -->\n%s\n", kn
+      printf "## Libraries and design rules\n<!-- written by nayo spawn from `araniko knowledge show`; replaced on every spawn -->\n%s\n", kn
       done = 1
     }
     /^## / {
@@ -519,19 +439,19 @@ brief_follows() {
 
 # ---------------------------------------------------------------- tasks
 
-# What the user asked for, from Ultron's Tasks (docs/design/tasks-v2.md §4.1). A
+# What the user asked for, from Araniko's Tasks (docs/design/tasks-v2.md §4.1). A
 # brief names the tasks it works on in its header, under `started:`:
 # `Tasks: T-41, T-42`, optionally `Tasks: T-42 (part 1 of 2)`; `41` is T-41 and an
 # old ask id (31.2) still works. Older briefs' `Asks: 31.2, 31` (31 = the whole
-# message) are read too. Checked against `ultron tasks list`. A missing ultron, a
+# message) are read too. Checked against `araniko tasks list`. A missing araniko, a
 # CLI without `tasks`, an error or no answer within ASKS_SEC skips the checks:
 # they never block a spawn.
 ASKS_SEC=5
 
-# The tasks ultron knows, one "<id>\t<state>" per line: each task by its number
+# The tasks araniko knows, one "<id>\t<state>" per line: each task by its number
 # (T-41) and by its old ask id (31.2), and each message (31). The state is the
-# task's status, `skipped-user`/`skipped-jarvis` when skipped, `removed` when
-# removed. $1 = the ultron CLI, then flags for `tasks list` (--open). Always
+# task's status, `skipped-user`/`skipped-nayo` when skipped, `removed` when
+# removed. $1 = the araniko CLI, then flags for `tasks list` (--open). Always
 # `--peek`, so reading the list here never marks the user's changes as seen. Falls back
 # to `asks list` on an older CLI. Fails when it can't tell.
 asks_known() {
@@ -557,43 +477,9 @@ header_ids() {
   printf '%s' "$1" | sed -E 's/[[:space:]]*\(part [0-9]+ of [0-9]+\)$//' | tr ', ' '\n\n' | sed '/^$/d'
 }
 
-# For `status`: the open tasks no brief names on its Tasks: (or Asks:) line, so a
-# Jarvis that did one itself sees it's still Queued and closes it. Five lines at
-# most. Fails open: no ultron, no jq or an error prints nothing.
-unbriefed_tasks() {
-  local u tmp f key val named=""
-  have jq || return 0
-  u=$(ultron_cli) || return 0
-  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-tasks.XXXXXX") || return 0
-  if ! time_boxed "$ASKS_SEC" "$u" tasks list --open --peek --json > "$tmp" 2>/dev/null; then
-    rm -f "$tmp"; return 0
-  fi
-  for f in "$H"/briefs/*.md; do
-    [ -f "$f" ] || continue
-    key=$(awk '/^## /{exit} /^(Tasks|Asks):/{sub(/:.*/, ""); print; exit}' "$f")
-    [ -n "$key" ] || continue
-    val=$(awk -v k="$key" '/^## /{exit} index($0, k ":") == 1 {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' "$f")
-    case "$val" in *"<"*) continue ;; esac # TEMPLATE.md's placeholder
-    val=$(header_ids "$val" | grep -E '^(T-)?[0-9]+$|^[0-9]+[.][0-9]+$')
-    [ "$key" = Tasks ] && val=$(printf '%s\n' "$val" | sed -E 's/^([0-9]+)$/T-\1/')
-    named="$named $(printf '%s' "$val" | tr '\n' ' ')"
-  done
-  jq -r '
-    .messages[]?.asks[]?
-    | select(.status == "queued" and .planned != true and .answered != true and .skipped_by == null and .task != null)
-    | [.task, (.id | tostring), (.message | tostring),
-       (if (.title | length) > 40 then .title[:40] + "…" else .title end)] | @tsv
-  ' "$tmp" 2>/dev/null | awk -F '\t' -v named="$named" '
-    BEGIN { n = split(named, a, " "); for (i = 1; i <= n; i++) seen[a[i]] = 1 }
-    seen[$1] || seen[$2] || seen[$3] { next }
-    ++c <= 5 { printf "task %s \"%s\" has no brief: brief it, or once you'"'"'ve done it yourself: ultron tasks close %s --answered --note \"<one line>\"\n", $1, $4, $1 }
-    END { if (c > 5) printf "… and %d more\n", c - 5 }'
-  rm -f "$tmp"
-}
-
 # Lint brief $1's Tasks: line (or an older Asks: line) ($2 = 1 for --force) and
-# leave it in ASKS for the spawn line. A malformed line refuses; an id ultron
-# doesn't know refuses unless --force; a task the user (or Jarvis) skipped or
+# leave it in ASKS for the spawn line. A malformed line refuses; an id araniko
+# doesn't know refuses unless --force; a task the user (or Nayo) skipped or
 # removed always refuses; no line while tasks are open only warns.
 check_asks() {
   local brief=$1 force=${2:-0} key="" val ids bad u tmp id st line
@@ -614,15 +500,15 @@ check_asks() {
     fi
     ASKS=$val
   fi
-  u=$(ultron_cli) || return 0
-  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-asks.XXXXXX") || return 0
+  u=$(araniko_cli) || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/nayo-asks.XXXXXX") || return 0
   if [ -n "$key" ]; then
     if time_boxed "$ASKS_SEC" asks_known "$u" > "$tmp" 2>/dev/null; then
       bad=""
       while read -r id; do
         line=$(awk -F '\t' -v id="$id" '$1 == id {print $2; exit}' "$tmp")
         case "$line" in
-          skipped-jarvis) rm -f "$tmp"; die "$id was skipped by Jarvis — don't brief it (bring it back in the Jarvis tab first)" ;;
+          skipped-nayo) rm -f "$tmp"; die "$id was skipped by Nayo — don't brief it (bring it back in the Nayo tab first)" ;;
           skipped-*) rm -f "$tmp"; die "$id was skipped by the user — don't brief it unless they bring it back" ;;
           removed) rm -f "$tmp"; die "$id was removed by the user — it isn't a task any more" ;;
           "")
@@ -635,8 +521,8 @@ $ids
 EOF
       if [ -n "$bad" ]; then
         rm -f "$tmp"
-        [ "$force" = 1 ] || die "no task ${bad% } in this project (ultron tasks list; or the user removed it) — fix the brief's $key: line, or --force if the list is wrong"
-        echo "tasks: ${bad% } not in ultron tasks list — spawning anyway (--force)"
+        [ "$force" = 1 ] || die "no task ${bad% } in this project (araniko tasks list; or the user removed it) — fix the brief's $key: line, or --force if the list is wrong"
+        echo "tasks: ${bad% } not in araniko tasks list — spawning anyway (--force)"
       fi
     fi
   elif time_boxed "$ASKS_SEC" asks_known "$u" --open > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
@@ -658,13 +544,13 @@ EOF
 
 # §2 rule 2: a brief carries only the notes that matter for its job, since every
 # line is re-read on every worker turn. Warns (never refuses) when more than
-# NOTES_MAX lines of brief $1 match notes from `ultron notes list`. The Libraries
-# section jarvis spawn writes isn't counted. Skipped silently without ultron.
+# NOTES_MAX lines of brief $1 match notes from `araniko notes list`. The Libraries
+# section nayo spawn writes isn't counted. Skipped silently without araniko.
 NOTES_MAX=5
 check_notes() {
   local brief=$1 u tmp n
-  u=$(ultron_cli) || return 0
-  tmp=$(mktemp "${TMPDIR:-/tmp}/jarvis-notes.XXXXXX") || return 0
+  u=$(araniko_cli) || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/nayo-notes.XXXXXX") || return 0
   if time_boxed "$ASKS_SEC" notes_known "$u" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
     n=$(awk '
       function norm(s) {
@@ -686,7 +572,7 @@ check_notes() {
   rm -f "$tmp"
 }
 
-# The notes' texts, one per line. $1 = the ultron CLI. Fails when it can't tell.
+# The notes' texts, one per line. $1 = the araniko CLI. Fails when it can't tell.
 notes_known() {
   local out
   out=$("$1" notes list --json 2>/dev/null) || return 1
@@ -698,7 +584,7 @@ notes_known() {
 
 # ---------------------------------------------------------------- request ids, files:
 
-# A fixed request id for one daemon call: jarvis-<what>-<16 hex of a hash of the rest>.
+# A fixed request id for one daemon call: nayo-<what>-<16 hex of a hash of the rest>.
 # The daemon answers a repeat of an id from what it did the first time (for 24 hours), so
 # a retried spawn or merge never does it twice. A spawn's id hashes the brief's path and
 # its started: line, which a spawn rewrites once it has its session: a retry after a
@@ -706,14 +592,22 @@ notes_known() {
 request_id() { # $1 = spawn | merge, then what names the call
   local what="$1" h; shift
   h=$(printf '%s\n' "$@" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null || cksum; } | awk '{print $1}' | cut -c1-16)
-  echo "jarvis-$what-$h"
+  echo "nayo-$what-$h"
 }
 
-# Whether this ultron takes --request-id (an older one refuses flags it doesn't know).
-takes_request_id() { ultron --help 2>/dev/null | grep -q -- '--request-id'; }
-# `--request-id=<id>` when it does, else nothing; $@ = request_id's arguments. Unquoted
-# where it's used: the id has no spaces.
-rid_flag() { takes_request_id && printf -- '--request-id=%s' "$(request_id "$@")"; }
+# Superset's CLI takes no request id, so spawn keeps its own ledger: $STATE/requests/<id>
+# holds the session a request started, for 24 hours, and a retry finds it there.
+ledger_get() { # $1 = request id; prints its session id, fails when there's none
+  local f="$STATE/requests/$1"
+  [ -s "$f" ] && [ $(( $(now) - $(mtime "$f") )) -lt 86400 ] && cat "$f"
+}
+ledger_put() { # $1 = request id, $2 = the session it started
+  mkdir -p "$STATE/requests" && printf '%s\n' "$2" > "$STATE/requests/$1"
+  find "$STATE/requests" -type f -mtime +1 -exec rm -f {} + 2>/dev/null
+  return 0
+}
+# A retry's note, when brief $1's request already started session $2.
+ledger_note() { echo "nayo: this spawn of $1 already started $(short "$2") (a retry): no second worker"; }
 
 # The paths or globs brief $1's files: line names, one per line (commas or spaces between).
 # The template's <placeholder> names none.
@@ -770,89 +664,17 @@ check_files() {
   local hits
   hits=$(files_overlaps "$1")
   [ -n "$hits" ] || return 0
-  echo "jarvis: $1 expects to touch files a running worker in this checkout also does:" >&2
+  echo "nayo: $1 expects to touch files a running worker in this checkout also does:" >&2
   printf '%s\n' "$hits" | head -n 12 | sed 's/^/  /' >&2
   [ "$2" = 1 ] && { echo "  spawning anyway (--force)" >&2; return 0; }
   die "isolate one of them (--isolate, or isolate: yes), wait for that worker's merge, or --force"
 }
 
-# For spawn --answers: brief $1 gets the answers ($2) and the blocked handoff ($3, else the
-# newest blocked handoff naming it) appended under ## Answers, once (a retry finds them there);
-# with $4 = 1 a fable model: line becomes claude-opus-5-5. Closes the old worker (the brief's
-# started: line names it) and drops its OPEN.md line. Sets ANS_BLOCKED and ANS_TERM.
-answered_brief() {
-  local brief="$1" ans="$2" ho="$3" settled="$4" f tmp
-  if [ -z "$ho" ]; then
-    for f in $(ls -t "$H"/*.md 2>/dev/null); do
-      [ "$(field brief "$f")" = "$brief" ] || continue
-      case "$(field status "$f")" in blocked*) ho="$f"; break ;; esac
-    done
-  fi
-  [ -n "$ho" ] || { echo "jarvis: no blocked handoff names $brief; give it with --blocked" >&2; return 1; }
-  ANS_BLOCKED="$ho"
-  ANS_TERM=$(sed -n 's/^started:.*terminal:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$brief" | head -n 1)
-  case "$ANS_TERM" in ""|\<*|dry-*) ANS_TERM="" ;; esac
-  if ! grep -qF "### The blocked handoff ($ho)" "$brief"; then
-    { printf '\n## Answers (%s)\n\n' "$(date '+%Y-%m-%d %H:%M')"
-      cat "$ans"
-      printf '\n\n### The blocked handoff (%s)\n\n' "$ho"
-      sed -e 's/^# /#### /' -e 's/^## /#### /' "$ho"
-    } >> "$brief"
-  fi
-  if [ "$settled" = 1 ] && [ "$(field model "$brief" | awk '{print $1}')" = fable ]; then
-    tmp=$(mktemp) || return 1
-    awk '/^## /{body=1} !body && !done && /^model:/ {print "model: claude-opus-5-5 (the answers settled the design; was fable)"; done=1; next} {print}' "$brief" > "$tmp" && mv "$tmp" "$brief"
-  fi
-  if [ -n "$ANS_TERM" ]; then
-    have ultron && ultron term close "$ANS_TERM" --json $(rid_flag answer "$brief" "$ANS_TERM") >/dev/null 2>&1
-    open_drop "$ANS_TERM"
-  fi
-  return 0
-}
-
-# answer <blocked handoff> <answers file> [--settled] [--fresh]: typed into the worker while its
-# context is small, else a fresh worker on the same brief (spawn --answers).
-cmd_answer() {
-  local ho="" ans="" settled="" fresh=0 brief term ctx text
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --settled) settled=--settled; shift ;;
-      --fresh) fresh=1; shift ;;
-      *) if [ -z "$ho" ]; then ho="$1"; else ans="$1"; fi; shift ;;
-    esac
-  done
-  [ -f "$ho" ] && [ -f "$ans" ] || die "usage: jarvis answer <blocked-handoff.md> <answers-file> [--settled] [--fresh]"
-  brief=$(field brief "$ho")
-  [ -f "$brief" ] || die "$ho names no brief that exists (brief: $brief)"
-  term=$(sed -n 's/^started:.*terminal:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$brief" | head -n 1)
-  ctx=""
-  if [ $fresh = 0 ] && [ -n "$term" ] && have jq && have ultron; then
-    ctx=$(ultron term get "$term" --json 2>/dev/null \
-      | jq -r 'select(.state != "exited" and .state != "failed") | .context_tokens // 0' 2>/dev/null)
-  fi
-  if [ -n "$ctx" ] && [ "$ctx" -le "$JARVIS_FRESH_AFTER" ] 2>/dev/null; then
-    text="Answers: $(cat "$ans")"
-    ultron term send "$term" --text "$text" >/dev/null || die "couldn't type the answers into $(short "$term")"
-    echo "answered $(short "$term") in place (context $((ctx / 1000))k, at most $((JARVIS_FRESH_AFTER / 1000))k)"
-    return 0
-  fi
-  [ -n "$ctx" ] && echo "$(short "$term") is at $((ctx / 1000))k context: a fresh worker gets the answers"
-  cmd_spawn "$brief" --answers "$ans" --blocked "$ho" $settled
-}
-
 cmd_spawn() {
-  local brief="" after="" follow="" why="" force=0 worker model effort tier prompt out id b cap_now account wmax wnow
-  local iso=0 dry=0 line isotag="" rid answers="" blocked="" settled=0 oldterm="" ask
-  ask="Put every question in one first handoff (status: blocked); once answered, finish this brief and hand off."
+  local brief="" after="" follow="" why="" force=0 worker model effort tier prompt out id b cap_now account
+  local iso=0 dry=0 rid
   while [ $# -gt 0 ]; do
     case "$1" in
-      --answers)
-        [ $# -ge 2 ] && [ -f "$2" ] || die "--answers needs a file with the user's answers"
-        answers="$2"; shift 2 ;;
-      --blocked)
-        [ $# -ge 2 ] && [ -f "$2" ] || die "--blocked needs the worker's blocked handoff"
-        blocked="$2"; shift 2 ;;
-      --settled) settled=1; shift ;;
       --after|--redo)
         [ -z "$follow" ] || die "give --after or --redo, not both"
         follow=${1#--}; after="${2:-}"; shift 2 ;;
@@ -865,25 +687,16 @@ cmd_spawn() {
       *) brief="$1"; shift ;;
     esac
   done
-  [ -f "$brief" ] || die "usage: jarvis spawn <handoffs/briefs/file.md> [--after <handoff> | --redo <handoff> [--why \"<line>\"]] [--force] [--isolate [--no-terminal]] [--answers <file> [--blocked <handoff>] [--settled]]"
+  [ -f "$brief" ] || die "usage: nayo spawn <handoffs/briefs/file.md> [--after <handoff> | --redo <handoff> [--why \"<line>\"]] [--force] [--isolate [--no-terminal]]"
   [ -z "$why" ] || [ "$follow" = redo ] || die "--why goes with --redo"
-  [ -n "$answers" ] || { [ -z "$blocked" ] && [ $settled = 0 ]; } || die "--blocked and --settled go with --answers"
   # Before anything rewrites the brief: a retry of this spawn gets the same id.
-  rid=$(request_id spawn "$brief" "$(field started "$brief")" "$follow" "$after" \
-    ${answers:+"answers $(cksum < "$answers" | awk '{print $1}')"})
-  if [ -n "$answers" ]; then
-    answered_brief "$brief" "$answers" "$blocked" "$settled" || exit 1
-    blocked=$ANS_BLOCKED; oldterm=$ANS_TERM
-    ask="Your questions are answered: the brief's ## Answers section has the answers and your blocked handoff $blocked. Start from them, don't re-read what that handoff already records, build straight through, and overwrite that handoff file when you hand off."
-  fi
+  rid=$(request_id spawn "$brief" "$(field started "$brief")" "$follow" "$after")
   # isolate: yes (a new worktree) or isolate: <path> · branch: <b> (that worktree again: a redo, a merge brief)
   case "$(iso_path "$brief")" in ""|no) ;; *) iso=1 ;; esac
-  [ "${JARVIS_DRY:-0}" = 1 ] && dry=1
-  [ $dry = 0 ] || [ $iso = 1 ] || die "--no-terminal (JARVIS_DRY=1) goes with --isolate"
-  # a branch Jarvis's workers are its own worktree's; one elsewhere would count as main's
-  [ $iso = 0 ] || [ -z "$WT" ] || die "--isolate is for the main Jarvis: a branch Jarvis's workers already work in its own worktree"
+  [ "${NAYO_DRY:-0}" = 1 ] && dry=1
+  [ $dry = 0 ] || [ $iso = 1 ] || die "--no-terminal (NAYO_DRY=1) goes with --isolate"
   have jq || die "jq is needed to read the spawn result"
-  [ $dry = 1 ] || need_ultron
+  [ -n "$WS" ] || [ $dry = 1 ] || die "SUPERSET_WORKSPACE_ID not set"
 
   worker=$(field worker "$brief" | awk '{print $1}')
   model=$(field model "$brief" | awk '{print $1}')
@@ -894,7 +707,7 @@ cmd_spawn() {
     case "$model" in \<*|""|default) model=$(worker_default model) ;; esac
     case "$effort" in \<*|""|default) effort=$(worker_default effort) ;; esac
   fi
-  case "$model" in \<*|"") [ "$worker" = opencode ] || [ "$worker" = grok ] || die "brief header needs a model (or set a default: ultron settings set workers.model <model>)" ;; esac
+  case "$model" in \<*|"") [ "$worker" = opencode ] || [ "$worker" = grok ] || die "brief header needs a model (or set a default: araniko settings set workers.model <model>)" ;; esac
   case "$model" in fable) tier=top ;; claude-opus-5-5|opus) tier=workhorse ;; *) tier=other ;; esac
 
   # An older "From to-do:" line (Open tab, before Tasks:) still links; an empty one is ignored.
@@ -908,7 +721,7 @@ cmd_spawn() {
   check_asks "$brief" "$force"
 
   # Before the lint, which fails a UI brief without the section.
-  stamp_knowledge "$brief" "${ULTRON_PROJECT_ID:-}"
+  stamp_knowledge "$brief"   # the project of this checkout, by araniko project get
   check_notes "$brief"
 
   if [ -x "$BIN/jev.sh" ]; then
@@ -917,82 +730,53 @@ cmd_spawn() {
   # files: shared with a running worker in this checkout
   [ $iso = 1 ] || check_files "$brief" "$force"
 
-  # account: N runs the worker under another Claude login (Ultron account N, ~/.claude-N
-  # by default). The band and the cap are the main account's, so they don't apply to it.
-  account=$(field account "$brief" | awk '{print $1}')
-  [ "$account" = 1 ] && account=""
   b=$(band | cut -f1)
-  # The user's workers.max caps live workers of every agent and account, Jarvis not
-  # counted. Without it (an older daemon), the Claude cap below applies instead.
-  wmax=$(workers_max); wnow=""
-  [ -n "$wmax" ] && wnow=$(live_workers)
-  if [ -n "$wmax" ] && [ -n "$wnow" ] && [ $force = 0 ] && [ "$wnow" -ge "$wmax" ]; then
-    die "worker cap reached ($wnow of $wmax live workers, set in Ultron's Settings). Queue it under To-do in OPEN.md, wait for a worker to finish, or --force"
-  fi
-  if [ "$worker" = claude ] && [ $force = 0 ] && [ -z "$account" ]; then
-    [ "$b" = red ] && [ "$tier" != other ] && die "band is red: new $tier-tier work goes to Codex (gpt-6-astra / gpt-5.6-sol). Edit the header, or --force"
-    [ "$b" = amber ] && [ "$model" = fable ] && die "band is amber: fable is off for workers. Use model: claude-opus-5-5 (amber band; fable-tier task), or --force"
-    if [ -z "$wmax" ] || [ -z "$wnow" ]; then
-      cap_now=$(claude_sessions)
-      if [ "$cap_now" -ge "$JARVIS_MAX_CLAUDE" ]; then
-        die "Claude cap reached ($cap_now of $JARVIS_MAX_CLAUDE, Jarvis included). Queue it under To-do in OPEN.md, route it to OpenCode/Codex, or --force"
-      fi
+  if [ "$worker" = claude ] && [ $force = 0 ] && { [ -z "$(field account "$brief" | awk '{print $1}')" ] || [ "$(field account "$brief" | awk '{print $1}')" = 1 ]; }; then
+    [ "$model" = fable ] && { [ "$b" = amber ] || [ "$b" = red ]; } && die "band is $b: fable is off for workers. Use model: claude-opus-5-5 ($b band; fable-tier task), or --force"
+    cap_now=$(claude_sessions)
+    if [ "$cap_now" -ge "$NAYO_MAX_CLAUDE" ]; then
+      die "Claude cap reached ($cap_now of $NAYO_MAX_CLAUDE, Nayo included). Queue it under To-do in OPEN.md, route it to OpenCode/Codex, or --force"
     fi
   fi
 
-  prompt="You are a Jarvis worker. Read AGENTS.md, then do the task in $brief."
+  prompt="You are a Nayo worker. Read AGENTS.md, then do the task in $brief."
   [ -n "$after" ] && prompt="$prompt $after records what is already done — start from there."
   [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists. Never run git commands that change state."
-  prompt="$prompt $ask"
+  prompt="$prompt Put every question in one first handoff (status: blocked); once answered, finish this brief and hand off."
 
-  # An isolated worker runs in its own git worktree (a plain `git worktree add` on jw/<slug>,
-  # not a daemon worktree: Ultron skips jw/* ones, so it stays invisible), started there with
-  # --cwd; the header names the worktree before the spawn, so a failed one is reused.
   if [ $iso = 1 ]; then
-    iso_prepare "$brief"
-    iso_cargo "$ISO_WT"
-    iso_header "$brief" "$ISO_WT" "$ISO_BR" || echo "jarvis: couldn't record isolate: in $brief (no started: line?)" >&2
-    prompt="$(iso_prompt "$brief" "$after")"
-    [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists."
-    [ -n "$answers" ] && ask=${ask/ $blocked./ $(iso_abs "$blocked").}
-    prompt="$prompt $ask"
-    isotag=" · isolate: $ISO_WT · branch: $ISO_BR"
+    spawn_isolated
+    return
   fi
 
-  # The project comes from $ULTRON_PROJECT_ID inside the CLI; the cwd is this checkout
-  # (a branch Jarvis's worktree, named too so the worker lands in it for sure).
-  # --brief records the brief on the session (and titles it by its stem); the prompt points at it.
-  set -- --agent "$worker" --role worker --brief "$brief" --prompt "$prompt" --json
-  [ -n "$WT" ] && set -- "$@" --worktree "$WT"
-  [ $iso = 1 ] && set -- "$@" --cwd "$ISO_WT"
+  set -- --workspace "$WS" --agent "$worker" --prompt "$prompt" --json
   case "$worker" in
     opencode|grok) [ -n "$model" ] && case "$model" in \<*) ;; *) set -- "$@" --model "$model" ;; esac ;;
     *) set -- "$@" --model "$model"; [ -n "$effort" ] && set -- "$@" --effort "$effort" ;;
   esac
-  # --force here also lifts the daemon's own machine-wide Claude cap
-  [ $force = 1 ] && set -- "$@" --force
-  # a retry of this spawn gets the session the first try started
-  takes_request_id && set -- "$@" --request-id "$rid"
-  if [ "$worker" = claude ] && [ -n "$account" ]; then
-    set -- "$@" --account "$account"
+  account=$(field account "$brief" | awk '{print $1}')
+  if [ "$worker" = claude ] && [ -n "$account" ] && [ "$account" != 1 ]; then
+    # Another Claude Code login (CLAUDE_CONFIG_DIR=~/.claude-<n>): Superset's agent presets
+    # can't pick an account, so run the CLI in a plain terminal the same way the preset does.
+    [ -d "$HOME/.claude-$account" ] || die "no ~/.claude-$account: log that account in first (CLAUDE_CONFIG_DIR=~/.claude-$account claude, then /login)"
+    local cmd="CLAUDE_CONFIG_DIR=\$HOME/.claude-$account claude --dangerously-skip-permissions --model $model${effort:+ --effort $effort} $(printf '%q' "$prompt")"
+    if id=$(ledger_get "$rid"); then ledger_note "$brief" "$id"; else
+    out=$(superset terminals create --workspace "$WS" --command "$cmd" --json 2>&1) || die "spawn on account $account failed: $out"
+    id=$(printf '%s' "$out" | jq -r '.terminalId // empty' 2>/dev/null)
+    fi
     effort="${effort:+$effort }acct $account"
-  fi
-  if [ $dry = 1 ]; then
-    id="dry-$(date +%s)-$$"
-    echo "no session (--no-terminal): from $ROOT, run:"
-    printf '  ultron agent spawn'; printf ' %q' "$@"; echo
+  elif id=$(ledger_get "$rid"); then ledger_note "$brief" "$id"
   else
-    out=$(ultron agent spawn "$@" 2>&1) || die "spawn failed (the daemon's Claude cap, or a usage limit — a failed Claude spawn in red means Codex${account:+; for account $account, check ultron account list}): $out${isotag:+ (the worktree $ISO_WT stays; spawn again to reuse it)}"
-    id=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
-    [ -n "$id" ] || die "no session id in: $out"
+  out=$(superset agents create "$@" 2>&1) || die "spawn failed (a failed Claude spawn means the red band): $out"
+  id=$(printf '%s' "$out" | jq -r '.sessionId // empty' 2>/dev/null)
   fi
+  [ -n "$id" ] || die "no sessionId in: $out"
+  ledger_put "$rid" "$id"
 
-  sed -i.bak -E "s/^started:.*/started: $(date '+%Y-%m-%d %H:%M') · terminal: $id/" "$brief" && rm -f "$brief.bak"
-  brief_follows "$brief" "$follow" "$after" "$why" || echo "jarvis: couldn't record ${follow:-follow} in $brief (no started: line?)" >&2
-  line="- $(date '+%Y-%m-%d %H:%M') · $worker/${model:-default}${effort:+ $effort} · term $id · $brief$isotag"
-  open_add_running "$line"
-  [ -n "$oldterm" ] && echo "answered as a fresh worker: closed $(short "$oldterm"), the answers and $blocked are in the brief"
-  echo "spawned $(short "$id")${ASKS:+ · $ASKS ·} $worker/${model:-default}${effort:+ $effort} ← $brief${isotag:+ · isolated on $ISO_BR} ($(cap_line))"
+  set_started "$brief" "$id" || echo "nayo: couldn't record started: in $brief" >&2
+  brief_follows "$brief" "$follow" "$after" "$why" || echo "nayo: couldn't record ${follow:-follow} in $brief (no started: line?)" >&2
+  open_add_running "- $(date '+%Y-%m-%d %H:%M') · $worker/${model:-default}${effort:+ $effort} · term $id · $brief"
+  echo "spawned $(short "$id")${ASKS:+ · $ASKS ·} $worker/${model:-default}${effort:+ $effort} ← $brief (Claude sessions $(claude_sessions) of $NAYO_MAX_CLAUDE)"
 }
 
 # ---------------------------------------------------------------- merge
@@ -1015,44 +799,33 @@ checks_none() {
     | tr -d '`' | tr 'A-Z' 'a-z' | grep -qE '^[[:space:]]*none([^a-z0-9]|$)'
 }
 
-# The last `ultron check` run of any session working brief $1: "green",
-# "red <the first failing command>", or nothing when none was recorded (or jq,
-# or an ultron with `check`, is missing).
-checks_state() {
-  have jq && have ultron || return 0
-  ultron check --last --brief "$1" --json 2>/dev/null | jq -r '
-    if type != "object" then empty
-    elif .passed then "green"
-    else "red " + ([.commands[]? | select(.exit != 0 or .timed_out == true) | .cmd][0] // "") end' 2>/dev/null
-}
-
-# Ultron's own run of the checks on handoff $1 (the daemon runs them once the worker hands
-# off and writes a `## Checks (run by Ultron)` section into it): "queued" or "running"
-# while one is coming (`ultron check --handoff`; skipped without jq or ultron), else
+# Araniko's own run of the checks on handoff $1 (the daemon runs them once the worker hands
+# off and writes a `## Checks (run by Araniko)` section into it): "queued" or "running"
+# while one is coming (`araniko check --handoff`; skipped without jq or araniko), else
 # "passed" or "failed <checks>" from the section, else nothing.
-ultron_checks() {
+araniko_checks() {
   local state first
-  if have jq && have ultron; then
-    state=$(ultron check --handoff "$1" --json 2>/dev/null | jq -r '
+  if have jq && have araniko; then
+    state=$(araniko check --handoff "$1" --json 2>/dev/null | jq -r '
       if type == "object" and (.state == "queued" or .state == "running") then .state else empty end' 2>/dev/null)
     [ -n "$state" ] && { echo "$state"; return 0; }
   fi
-  first=$(awk '/^## /{on = ($0 ~ /^## Checks \(run by Ultron\)[[:space:]]*$/); next} on && NF {print; exit}' "$1" 2>/dev/null)
+  first=$(awk '/^## /{on = ($0 ~ /^## Checks \(run by Araniko\)[[:space:]]*$/); next} on && NF {print; exit}' "$1" 2>/dev/null)
   case "$first" in
     Passed*) echo passed ;;
     Failed*) echo "failed $(printf '%s' "$first" | sed -E 's/^Failed:?[[:space:]]*//; s/[[:space:]]+·.*$//')" ;;
   esac
 }
 
-# Ultron's run on handoff $1, for merge: prints its line and sets red=1 and red_why
+# Araniko's run on handoff $1, for merge: prints its line and sets red=1 and red_why
 # (cmd_merge's locals) when it failed or hasn't finished; returns 1 when there's none.
-merge_ultron_checks() {
+merge_araniko_checks() {
   local u
-  u=$(ultron_checks "$1")
+  u=$(araniko_checks "$1")
   case "$u" in
-    passed) echo "  checks: passed (Ultron ran them on the handoff)" ;;
-    failed*) echo "  ✗ checks: failed (Ultron ran them on the handoff) — ${u#failed }"; red=1; red_why="checks are red (${u#failed })" ;;
-    queued|running) echo "  ✗ checks: Ultron is still running them on the handoff"; red=1; red_why="Ultron's checks on this handoff haven't finished — wait for its next handoff.written (the result lands in the handoff)" ;;
+    passed) echo "  checks: passed (Araniko ran them on the handoff)" ;;
+    failed*) echo "  ✗ checks: failed (Araniko ran them on the handoff) — ${u#failed }"; red=1; red_why="checks are red (${u#failed })" ;;
+    queued|running) echo "  ✗ checks: Araniko is still running them on the handoff"; red=1; red_why="Araniko's checks on this handoff haven't finished — wait for its next handoff.written (the result lands in the handoff)" ;;
     *) return 1 ;;
   esac
   return 0
@@ -1073,32 +846,25 @@ checks_anyway_log() {
   echo "  checks overridden: $anyway (logged in the handoff)"
 }
 
-# Print the checks line for merge (brief $1, handoff $2); sets red=1 and red_why
-# (cmd_merge's locals) when they're red. Ultron's run on the handoff decides when there
-# is one; else the brief's last `ultron check` run.
+# Print the checks line for merge (brief $1, handoff $2): Araniko's run on the handoff, when
+# the project's daemon ran one; sets red=1 and red_why (cmd_merge's locals) when it's red.
 merge_checks() {
-  local checks
   if checks_none "$1"; then
     echo "  checks: none (the brief's ## Checks says so)"
-  elif ! merge_ultron_checks "$2"; then
-    checks=$(checks_state "$1")
-    case "$checks" in
-      green) echo "  checks: green" ;;
-      red*) echo "  ✗ checks: red — ${checks#red }"; red=1; red_why="checks are red" ;;
-      *) echo "  checks: no \`ultron check\` run recorded for this brief" ;;
-    esac
+  else
+    merge_araniko_checks "$2" || true
   fi
 }
 
-# A second opinion (`ultron review second`): the project's policy (Project settings →
+# A second opinion (`araniko review second`): the project's policy (Project settings →
 # "Second opinion before merging": off, on big changes, always) may want one before
 # merging. Prints its line and sets so_block (cmd_merge's local) when the merge must
 # wait: one is needed and there's none, or it's stale, running or failed; or its
-# verdict is Blocking. Fails open: no jq, no ultron, or an ultron without it says nothing.
+# verdict is Blocking. Fails open: no jq, no araniko, or an araniko without it says nothing.
 second_opinion() {
   local v state needed reason review
-  have jq && have ultron || return 0
-  v=$(ultron review second "$1" --status --json 2>/dev/null) || return 0
+  have jq && have araniko || return 0
+  v=$(araniko review second "$1" --status --json 2>/dev/null) || return 0
   state=$(printf '%s' "$v" | jq -r '.state // empty' 2>/dev/null)
   [ -n "$state" ] || return 0
   needed=$(printf '%s' "$v" | jq -r '.policy.needed // false')
@@ -1131,14 +897,14 @@ second_opinion_gate() {
       printf '\n## Second opinion\nSkipped at merge: %s (%s)\n' "$skip_so" "$(date '+%Y-%m-%d %H:%M')" >> "$1"
     echo "  second opinion skipped: $skip_so (logged in the handoff)"
   elif [ -n "$so_block" ]; then
-    die "$so_block — run \`ultron review second $1\`, send Blocking findings back to a worker, or --skip-second-opinion \"<reason>\""
+    die "$so_block — run \`araniko review second $1\`, send Blocking findings back to a worker, or --skip-second-opinion \"<reason>\""
   fi
 }
 
 cmd_merge() {
-  local ho="" check=0 msg="" outcome="" push="$JARVIS_PUSH" keep=0 force=0 so_block="" skip_so="" rv=""
-  local anyway="" red_why=""
-  local status brief agent files f bad=0 red=0 checks other title dest trailer sha term old_tracked=0
+  local ho="" check=0 msg="" outcome="" push="$NAYO_PUSH" keep=0 force=0 so_block="" skip_so="" rv=""
+  local anyway="" red=0 red_why=""
+  local status brief agent files f bad=0 other title dest trailer sha term old_tracked=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) check=1; shift ;;
@@ -1152,12 +918,11 @@ cmd_merge() {
       *) ho="$1"; shift ;;
     esac
   done
-  [ -f "$ho" ] || die "usage: jarvis merge <handoffs/file.md> [--check] [-m msg] [--outcome clean|corrected|escalated|respawned] [--no-push] [--keep-open]"
+  [ -f "$ho" ] || die "usage: nayo merge <handoffs/file.md> [--check] [-m msg] [--outcome clean|corrected|escalated|respawned] [--no-push] [--keep-open]"
   status=$(field status "$ho" | awk '{print $1}')
   brief=$(field brief "$ho" | awk '{print $1}')
   agent=$(field agent "$ho")
-  # a handoff that lists itself would break `git add` after the move below
-  files=$(listed_files "$ho" | grep -vxF "$ho")
+  files=$(listed_files "$ho" | grep -vxF "$ho")  # a handoff that lists itself is moved, not added
   [ -n "$files" ] || die "$ho lists no files under ## Files"
 
   # an isolated worker's handoff: its branch is committed in its worktree and git-merged here
@@ -1224,18 +989,10 @@ cmd_merge() {
   line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files"
 
   if [ "$push" = 1 ]; then
-    # Ultron's gate check (the pre-push hook) may refuse a push to main; the commit stays.
-    # A branch Jarvis pushes its branch (with -u the first time: a new one has no upstream).
-    set -- -q
-    if [ -n "$WT" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
-      set -- -q -u origin "$(git branch --show-current)"
-    fi
-    if git push "$@" 2>/dev/null; then line="$line · pushed"; else line="$line · push refused, so the commit stays local until the next allowed push"; fi
-  else
-    line="$line · not pushed (--no-push or JARVIS_PUSH=0)"
+    if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push FAILED (run git push)"; fi
   fi
-  if [ $keep = 0 ] && [ -n "$term" ] && have ultron; then
-    ultron term close "$term" --json $(rid_flag merge "$ho" "$term") >/dev/null 2>&1 && line="$line · closed $(short "$term")"
+  if [ $keep = 0 ] && [ -n "$term" ] && [ -n "$WS" ]; then
+    superset terminals close --workspace "$WS" --terminal "$term" >/dev/null 2>&1 && line="$line · closed $(short "$term")"
   fi
   if [ -n "$outcome" ] && [ -x "$BIN/jev.sh" ] && [ -n "$brief" ]; then
     "$BIN/jev.sh" outcome "$brief" "$outcome" >/dev/null 2>&1
@@ -1250,7 +1007,7 @@ cmd_merge() {
 # at $WT_ROOT/<repo>/<slug>, on branch jw/<slug> from HEAD; spawn rewrites the line to
 # `isolate: <worktree> · branch: jw/<slug>`, and merge reads it back. The worker edits
 # and builds only there and writes its handoff into this checkout's handoffs/, so
-# `jarvis events` sees it. Merge commits the listed files on the branch inside the
+# `nayo events` sees it. Merge commits the listed files on the branch inside the
 # worktree, then `git merge --no-ff`s the branch here. --no-ff rather than rebase +
 # fast-forward: a conflict is resolved by merging the main branch INTO jw/<slug>, and a
 # rebase would replay the original commits and hit the same conflict again. The merge
@@ -1262,8 +1019,50 @@ REPO_NAME=$(basename "$ROOT")
 iso_slug() { basename "$1" .md | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-//'; }
 iso_path() { field isolate "$1" | sed -E 's/[[:space:]]*·[[:space:]]*branch:.*$//; s/[[:space:]]+$//'; }
 iso_branch() { field isolate "$1" | sed -n 's/.*branch:[[:space:]]*\([^ ]*\).*/\1/p'; }
-iso_target() { echo "$WT_ROOT/$REPO_NAME/target"; }
+# One cargo target per worktree: the workspace crates hash the same in every worktree, so a
+# shared target let one worker's build overwrite another's (2026-11-10).
+iso_target() { echo "$WT_ROOT/$REPO_NAME/target-$(basename "${ISO_WT:-shared}")"; }
+# After worktree $1 is removed: delete its cargo targets, $(iso_target) and $(iso_target)-tauri
+# (2-7 GB each; left behind they filled the disk on 2026-11-15). Only a target-<slug> folder
+# directly under $WT_ROOT/$REPO_NAME, never the shared target.
+iso_rm_targets() {
+  local d="$WT_ROOT/$REPO_NAME" t ISO_WT=$1
+  [ -n "$1" ] && [ -n "$(basename "$1")" ] || return 0
+  for t in "$(iso_target)" "$(iso_target)-tauri"; do
+    [ "$(dirname "$t")" = "$d" ] || continue
+    case "$(basename "$t")" in target-?*) ;; *) continue ;; esac
+    [ -d "$t" ] && rm -rf "$t"
+  done
+  return 0
+}
+# One line when the volume holding the worktrees has under 20 GB free (df only, no du: cheap).
+disk_warn() {
+  local d="$WT_ROOT" kb gb
+  while [ ! -d "$d" ] && [ "$d" != / ]; do d=$(dirname "$d"); done
+  kb=$(df -k "$d" 2>/dev/null | awk 'NR == 2 {print $4}')
+  case "$kb" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$kb" -lt 20971520 ] || return 0
+  gb=$((kb / 1048576))
+  echo "disk: $gb GB free on the worktrees' volume — old target-* build folders in $WT_ROOT/$REPO_NAME are the usual cause"
+}
 iso_abs() { case "$1" in /*) echo "$1" ;; *) echo "$ROOT/$1" ;; esac; }
+
+# Write `started: <now> · terminal: $2` into brief $1's header: over its started: line, or,
+# when it has none, under effort: (else model:, else worker:), so follow and isolate:
+# lines have their anchor.
+set_started() {
+  awk -v val="$(date '+%Y-%m-%d %H:%M') · terminal: $2" '
+    /^## / { body = 1 }
+    !body && /^started:/ { if (!done) line[++n] = "started: " val; done = 1; next }
+    { line[++n] = $0; if (!body && /^effort:/) e = n; if (!body && /^model:/) m = n; if (!body && /^worker:/) w = n }
+    END {
+      at = done ? 0 : (e ? e : (m ? m : w))
+      if (!done && !at) exit 3
+      for (i = 1; i <= n; i++) { print line[i]; if (i == at) print "started: " val }
+    }
+  ' "$1" > "$1.tmp" || { rm -f "$1.tmp"; return 1; }
+  mv "$1.tmp" "$1"
+}
 
 # Write `isolate: $2 · branch: $3` into brief $1's header, under started: (replacing one).
 iso_header() {
@@ -1288,12 +1087,12 @@ iso_prepare() {
     echo "isolated: reusing $wt ($br)"
   else
     slug=$(iso_slug "$brief"); [ -n "$slug" ] || die "no slug in $brief's name"
-    case "$WT_ROOT/" in "$ROOT"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is inside the repo: Ultron would list the worktrees as branch Jarvises" ;; esac
+    case "$WT_ROOT/" in "$ROOT"/*) die "NAYO_WT_ROOT ($WT_ROOT) is inside the repo: Araniko would list the worktrees as branch Nayos" ;; esac
     mkdir -p "$WT_ROOT/$REPO_NAME" || die "can't create $WT_ROOT/$REPO_NAME"
     real=$(cd "$WT_ROOT/$REPO_NAME" && pwd -P)
     case "$real/" in
-      "$(cd "$ROOT" && pwd -P)"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is inside the repo: Ultron would list the worktrees as branch Jarvises" ;;
-      "$(cd "${ULTRON_HOME:-$HOME/.ultron}" 2>/dev/null && pwd -P || echo /nonexistent)"/*) die "JARVIS_WT_ROOT ($WT_ROOT) is under ~/.ultron — put it somewhere else" ;;
+      "$(cd "$ROOT" && pwd -P)"/*) die "NAYO_WT_ROOT ($WT_ROOT) is inside the repo: Araniko would list the worktrees as branch Nayos" ;;
+      "$(cd "${ARANIKO_HOME:-$HOME/.araniko}" 2>/dev/null && pwd -P || echo /nonexistent)"/*) die "NAYO_WT_ROOT ($WT_ROOT) is under ~/.araniko — put it somewhere else" ;;
     esac
     wt="$real/$slug"; br="jw/$slug"
     while [ -e "$wt" ] || git show-ref --verify --quiet "refs/heads/$br"; do
@@ -1320,34 +1119,85 @@ iso_links() {
   done
 }
 
-# Isolated cargo builds share one target/ (iso_target), not one per worktree. `ultron agent
-# spawn` can't set CARGO_TARGET_DIR, so a cargo config next to the worktrees sets
-# build.target-dir: cargo reads .cargo/config.toml in every parent of the folder it runs in.
-# A config there that jarvis didn't write is left alone.
-iso_cargo() {
-  local f="$WT_ROOT/$REPO_NAME/.cargo/config.toml"
-  [ -f "$1/Cargo.toml" ] || return 0
-  if [ -f "$f" ] && ! grep -q '^# written by jarvis' "$f"; then
-    echo "isolated: left $f alone (jarvis didn't write it); builds go where it says"
-    return 0
+# The shell command that starts agent $1 (model $2, effort $3, Claude account $4) on
+# prompt $5, the way Superset's own preset for that agent does (`superset agents list`),
+# plus CARGO_TARGET_DIR. `agents create` has no --cwd, so isolated workers go through
+# `terminals create --cwd --command`, like the other-account path in cmd_spawn.
+iso_command() {
+  local worker=$1 model=$2 effort=$3 account=$4 prompt=$5 preset="" base pargs envs flags=""
+  envs="CARGO_TARGET_DIR=$(printf '%q' "$(iso_target)")"
+  if have superset && have jq; then
+    preset=$(superset agents list --local --json 2>/dev/null | jq -r --arg p "$worker" '
+      [.[]? | select(.presetId == $p)][0] // empty
+      | ([.env // {} | to_entries[] | "\(.key)=\(.value | @sh)"] | join(" ")) + "\t"
+        + ([.command] + (.args // []) | map(@sh) | join(" ")) + "\t"
+        + ((.promptArgs // []) | map(@sh) | join(" "))' 2>/dev/null)
   fi
-  mkdir -p "$(dirname "$f")" || return 0
-  printf '# written by jarvis spawn --isolate: isolated worktrees build into one shared folder\n[build]\ntarget-dir = "%s"\n' "$(iso_target)" > "$f"
+  if [ -n "$preset" ]; then
+    [ -z "$(printf '%s' "$preset" | cut -f1)" ] || envs="$envs $(printf '%s' "$preset" | cut -f1)"
+    base=$(printf '%s' "$preset" | cut -f2); pargs=$(printf '%s' "$preset" | cut -f3)
+  else
+    case "$worker" in # Superset's presets as of 2026-11-10
+      claude) base="claude --dangerously-skip-permissions"; pargs="" ;;
+      codex) base="codex --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust"; pargs="--" ;;
+      opencode) base="opencode"; pargs="--prompt" ;;
+      grok) base="grok --always-approve"; pargs="" ;;
+    esac
+  fi
+  case "$worker" in
+    claude)
+      [ -n "$account" ] && [ "$account" != 1 ] && envs="$envs CLAUDE_CONFIG_DIR=\$HOME/.claude-$account"
+      flags="--model $model${effort:+ --effort $effort}" ;;
+    codex) flags="-m $model${effort:+ -c model_reasoning_effort=$effort}" ;;
+    opencode|grok) case "$model" in ""|\<*) ;; *) flags="--model $model" ;; esac ;;
+  esac
+  printf '%s %s %s%s %q' "$envs" "$base" "$flags" "${pargs:+ $pargs}" "$prompt"
 }
 
-# The prompt for an isolated worker on brief $1 in ISO_WT/ISO_BR ($2 = the --after handoff).
-iso_prompt() {
-  local prompt mainbr
-  mainbr=$(git symbolic-ref --short HEAD 2>/dev/null || echo main)
-  prompt="You are a Jarvis worker. Read AGENTS.md, then do the task in $(iso_abs "$1")."
-  [ -n "$2" ] && prompt="$prompt $(iso_abs "$2") records what is already done — start from there."
-  prompt="$prompt You are isolated: your working directory $ISO_WT is your own git worktree on branch $ISO_BR, so edit, build and test only inside it (the brief's repo paths are relative to it). Write your handoff to the main checkout, $ROOT/handoffs/ (an absolute path), and list files relative to the repo as usual."
-  if [ -n "$(field merges "$1")" ]; then
-    prompt="$prompt This brief is a merge: run git merge $mainbr inside $ISO_WT — the one git command you may run that changes state (git merge --abort to start over); never commit, Jarvis commits the merge."
-  else
-    prompt="$prompt Still never run git commands that change state: Jarvis commits your branch."
+# cmd_spawn's isolated tail; uses its locals (brief, after, follow, why, worker, model,
+# effort, dry, force) and ASKS.
+spawn_isolated() {
+  local account prompt cmd out id mainbr orig="" line
+  account=$(field account "$brief" | awk '{print $1}')
+  if [ "$worker" = claude ] && [ -n "$account" ] && [ "$account" != 1 ] && [ ! -d "$HOME/.claude-$account" ]; then
+    die "no ~/.claude-$account: log that account in first (CLAUDE_CONFIG_DIR=~/.claude-$account claude, then /login)"
   fi
-  printf '%s' "$prompt"
+  iso_prepare "$brief"
+  mainbr=$(git symbolic-ref --short HEAD 2>/dev/null || echo main)
+  orig=$(field merges "$brief")
+
+  prompt="You are a Nayo worker. Read AGENTS.md, then do the task in $(iso_abs "$brief")."
+  [ -n "$after" ] && prompt="$prompt $(iso_abs "$after") records what is already done — start from there."
+  prompt="$prompt You are isolated: your working directory $ISO_WT is your own git worktree on branch $ISO_BR, so edit, build and test only inside it (the brief's repo paths are relative to it). Write your handoff to the main checkout, $ROOT/handoffs/ (an absolute path), and list files relative to the repo as usual."
+  if [ -n "$orig" ]; then
+    prompt="$prompt This brief is a merge: run git merge $mainbr inside $ISO_WT — the one git command you may run that changes state (git merge --abort to start over); never commit, Nayo commits the merge."
+  else
+    prompt="$prompt Still never run git commands that change state: Nayo commits your branch."
+  fi
+  [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists."
+  prompt="$prompt Put every question in one first handoff (status: blocked); once answered, finish this brief and hand off."
+  cmd=$(iso_command "$worker" "$model" "$effort" "$account" "$prompt")
+  [ -n "$account" ] && [ "$account" != 1 ] && [ "$worker" = claude ] && effort="${effort:+$effort }acct $account"
+
+  if [ "$dry" = 1 ]; then
+    id="dry-$(date +%s)-$$"
+    echo "no terminal (--no-terminal): in $ISO_WT, run:"
+    printf '  %s\n' "$cmd"
+  elif id=$(ledger_get "$rid"); then
+    ledger_note "$brief" "$id"
+  else
+    out=$(superset terminals create --workspace "$WS" --cwd "$ISO_WT" --command "$cmd" --json 2>&1) || die "isolated spawn failed: $out (the worktree $ISO_WT stays; spawn again to reuse it)"
+    id=$(printf '%s' "$out" | jq -r '.terminalId // .sessionId // empty' 2>/dev/null)
+    [ -n "$id" ] || die "no terminalId in: $out"
+    ledger_put "$rid" "$id"
+  fi
+
+  set_started "$brief" "$id" || echo "nayo: couldn't record started: in $brief" >&2
+  brief_follows "$brief" "$follow" "$after" "$why" || echo "nayo: couldn't record ${follow:-follow} in $brief (no started: line?)" >&2
+  iso_header "$brief" "$ISO_WT" "$ISO_BR" || echo "nayo: couldn't record isolate: in $brief (no started: line?)" >&2
+  line="- $(date '+%Y-%m-%d %H:%M') · $worker/${model:-default}${effort:+ $effort} · term $id · $brief · isolate: $ISO_WT · branch: $ISO_BR"
+  open_add_running "$line"
+  echo "spawned $(short "$id")${ASKS:+ · $ASKS ·} $worker/${model:-default}${effort:+ $effort} ← $brief · isolated on $ISO_BR (Claude sessions $(claude_sessions) of $NAYO_MAX_CLAUDE)"
 }
 
 # For `status`: an isolated running line $1 gets its branch and how far behind it is.
@@ -1423,7 +1273,7 @@ merge_isolated() {
   done
   dirty=$(git status --porcelain -uall -- $files 2>/dev/null | cut -c4- | sed -e 's/.* -> //' -e 's/^"//' -e 's/"$//')
   [ -z "$dirty" ] || { echo "  ✗ uncommitted changes in the main checkout in listed files:"; printf '%s\n' "$dirty" | sed 's/^/    /'; }
-  merge_checks "$brief" "$ho"   # Ultron's run on the handoff, else the brief's last `ultron check`; sets red
+  merge_checks "$brief" "$ho"
   second_opinion "$ho"
   [ $check = 1 ] && { [ -z "$dirty" ] && [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
 
@@ -1504,14 +1354,11 @@ merge_isolated() {
   line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files from $br"
 
   if [ "$push" = 1 ]; then
-    # Ultron's gate check (the pre-push hook) may refuse a push to main; the commit stays.
-    if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push refused, so the commit stays local until the next allowed push"; fi
-  else
-    line="$line · not pushed (--no-push or JARVIS_PUSH=0)"
+    if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push FAILED (run git push)"; fi
   fi
-  if [ $keep = 0 ] && have ultron; then
-    [ -n "$term" ] && ultron term close "$term" --json $(rid_flag merge "$ho" "$term") >/dev/null 2>&1 && line="$line · closed $(short "$term")"
-    case "${oterm:-}" in ""|\<*) ;; *) ultron term close "$oterm" --json $(rid_flag merge "$ho" "$oterm") >/dev/null 2>&1 && line="$line · closed $(short "$oterm")" ;; esac
+  if [ $keep = 0 ] && [ -n "$WS" ]; then
+    [ -n "$term" ] && superset terminals close --workspace "$WS" --terminal "$term" >/dev/null 2>&1 && line="$line · closed $(short "$term")"
+    case "${oterm:-}" in ""|\<*) ;; *) superset terminals close --workspace "$WS" --terminal "$oterm" >/dev/null 2>&1 && line="$line · closed $(short "$oterm")" ;; esac
   fi
   if [ -n "$outcome" ] && [ -x "$BIN/jev.sh" ]; then
     "$BIN/jev.sh" outcome "$brief" "$outcome" >/dev/null 2>&1
@@ -1520,11 +1367,11 @@ merge_isolated() {
   # 4. the worktree and branch go, unless the worker left files there that weren't listed
   left=$(git -C "$wt" status --porcelain -uall 2>/dev/null)
   if [ -n "$left" ]; then
-    line="$line · kept $wt: $(printf '%s\n' "$left" | wc -l | tr -d ' ') unlisted change(s) there (jarvis clean-worktrees removes it)"
-  elif git worktree remove --force "$wt" >/dev/null 2>&1 && git branch -q -d "$br" >/dev/null 2>&1; then
+    line="$line · kept $wt: $(printf '%s\n' "$left" | wc -l | tr -d ' ') unlisted change(s) there (nayo clean-worktrees removes it)"
+  elif git worktree remove --force "$wt" >/dev/null 2>&1 && iso_rm_targets "$wt" && git branch -q -d "$br" >/dev/null 2>&1; then
     line="$line · removed $br and its worktree"
   else
-    line="$line · couldn't remove $wt / $br (jarvis clean-worktrees)"
+    line="$line · couldn't remove $wt / $br (nayo clean-worktrees)"
   fi
   echo "$line · OPEN.md updated in the same commit"
   return 0
@@ -1554,7 +1401,7 @@ iso_conflict() {
     echo "worker: claude"
     echo "model: claude-opus-5-5"
     echo "effort: high"
-    echo "started: <filled in by jarvis spawn>"
+    echo "started: <filled in by nayo spawn>"
     [ -n "$tasks" ] && echo "$tasks"
     echo "isolate: $wt · branch: $br"
     echo "merges: $ho"
@@ -1573,7 +1420,7 @@ iso_conflict() {
     for f in $conflicts; do echo "  - \`$f\`"; done
     echo
     echo "## Scope"
-    echo "- Work only inside \`$wt\`. The one git command you run that changes state is \`git merge $mainbr\` there (\`git merge --abort\` to start over); read-only git is fine. Don't stage by hand, don't commit: Jarvis commits the merge."
+    echo "- Work only inside \`$wt\`. The one git command you run that changes state is \`git merge $mainbr\` there (\`git merge --abort\` to start over); read-only git is fine. Don't stage by hand, don't commit: Nayo commits the merge."
     echo "- May touch (in the worktree): $(printf '`%s` ' $files | sed 's/ $//')"
     echo "- Must not touch: anything else, and nothing in the main checkout except your handoff."
     echo
@@ -1591,7 +1438,7 @@ iso_conflict() {
     echo "again. If you have no questions, build straight through."
   } > "$mb"
   echo "kept $wt and $br. Merge brief written: $mb"
-  echo "  next: handoffs/bin/jarvis spawn $mb   (its handoff then merges through jarvis merge as usual)"
+  echo "  next: handoffs/bin/nayo spawn $mb   (its handoff then merges through nayo merge as usual)"
 }
 
 # Remove isolated worktrees and jw/* branches that no running worker uses and whose
@@ -1620,6 +1467,7 @@ cmd_clean_worktrees() {
       continue
     fi
     [ -z "$wt" ] || git worktree remove --force "$wt" >/dev/null 2>&1 || { echo "couldn't remove $wt"; continue; }
+    [ -z "$wt" ] || iso_rm_targets "$wt"
     git branch -q -D "$br" >/dev/null 2>&1 && { n=$((n + 1)); echo "removed $br${wt:+ and $wt}"; }
   done <<EOF
 $entries
@@ -1630,33 +1478,181 @@ EOF
 
 # ---------------------------------------------------------------- events
 
-# For Claude Code's Monitor tool: Jarvis arms Monitor on `handoffs/bin/jarvis events`
+# For Claude Code's Monitor tool: Nayo arms Monitor on `handoffs/bin/nayo events`
 # and each stdout line arrives as a notification, so nothing is typed into its prompt.
-# `ultron jarvis events --follow` prints one "[jarvis event] …" line per handoff or
-# worker trouble for $ULTRON_PROJECT_ID's Jarvis (a branch Jarvis: its worktree's),
-# reconnecting across daemon restarts.
-cmd_events() {
-  need_ultron
-  ultron jarvis events --help >/dev/null 2>&1 \
-    || die "this ultron has no \`jarvis events\` yet — update Ultron (rebuild ultrond and the CLI), then re-arm"
-  if [ -n "$WT" ]; then
-    ultron jarvis events --help 2>/dev/null | grep -q -- --worktree \
-      || die "this ultron's \`jarvis events\` has no --worktree yet — update Ultron, then re-arm"
-    exec ultron jarvis events --follow --worktree "$WT"
+# One "[nayo event] …" line per thing that needs Nayo:
+#   handoff.written <path> (<status>)      a handoff landed or changed (path + mtime + status)
+#   session.limit_hit <id> <brief>         a usage limit on a worker's screen (once an hour)
+#   session.exited <id> <brief>            a running worker's terminal exited or closed
+#   session.stalled <id> <brief>           a worker with no handoff yet whose screen hasn't
+#                                          changed for EVENTS_STALL_MIN minutes
+# What it has reported lives in $STATE/events.seen, so a Monitor re-armed after a timeout
+# or a /clear picks up what landed in between; a first run only learns what's there.
+# The newest `nayo events` wins: an older one still running stops at its next pass.
+EVENTS_SEC=20
+EVENTS_STALL_MIN=10
+
+events_once() { # $1 = key: 0 the first time it's seen, 1 after
+  grep -qxF "$1" "$STATE/events.seen" && return 1
+  echo "$1" >> "$STATE/events.seen"
+}
+
+handoff_files() { # dated handoffs only (not OPEN.md, NOTES.md, …)
+  local ho
+  for ho in "$H"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md; do [ -f "$ho" ] && echo "$ho"; done
+}
+
+events_tick() {
+  local ho st live line id brief scr h f since now_
+  while IFS= read -r ho; do
+    [ -n "$ho" ] || continue
+    st=$(field status "$ho")
+    events_once "ho $ho $(mtime "$ho") $st" && echo "[nayo event] handoff.written $ho (${st:-?})"
+  done <<EOF
+$(handoff_files)
+EOF
+  [ -n "$WS" ] && have superset && have jq || return 0
+  live=$(superset terminals list --workspace "$WS" --json 2>/dev/null \
+    | jq -r '.sessions[]? | select(.exited | not) | .terminalId' 2>/dev/null)
+  while IFS= read -r line; do
+    id=$(printf '%s' "$line" | sed -n 's/.*term \([^ ]*\).*/\1/p')
+    [ -n "$id" ] || continue
+    brief=$(printf '%s' "$line" | grep -o "$H/briefs/[^ ]*\.md" | head -n 1)
+    if [ -n "$live" ] && ! printf '%s\n' "$live" | grep -qxF "$id"; then
+      events_once "gone $id" && echo "[nayo event] session.exited $(short "$id") ${brief:-?}"
+      continue
+    fi
+    scr=$(superset terminals read --workspace "$WS" --terminal "$id" --max-lines 20 --json 2>/dev/null \
+      | jq -r '.text // empty' 2>/dev/null)
+    [ -n "$scr" ] || continue
+    if printf '%s' "$scr" | grep -Eiq "$LIMIT_RE"; then
+      events_once "limit $id $(date +%Y%m%d%H)" && echo "[nayo event] session.limit_hit $(short "$id") ${brief:-?}"
+    fi
+    # stalled: the screen minus spinner/timer lines unchanged, and no handoff for its brief yet
+    [ -n "$brief" ] && grep -lq "^brief:[[:space:]]*$brief" "$H"/*.md 2>/dev/null && continue
+    h=$(printf '%s' "$scr" | grep -vE '…|tokens|esc to interrupt' | cksum | tr -d ' \t')
+    f="$STATE/events-screen-$id"; now_=$(now)
+    if [ -f "$f" ] && [ "$(cut -d' ' -f1 "$f")" = "$h" ]; then
+      since=$(cut -d' ' -f2 "$f")
+      if [ $((now_ - since)) -ge $((EVENTS_STALL_MIN * 60)) ] && ! printf '%s' "$scr" | grep -q '…'; then
+        events_once "stall $id $h" && echo "[nayo event] session.stalled $(short "$id") ${brief:-?} (screen unchanged ${EVENTS_STALL_MIN}+ min)"
+      fi
+    else
+      echo "$h $now_" > "$f"
+    fi
+  done <<EOF
+$(running_lines)
+EOF
+}
+
+# ---------------------------------------------------------------- send, read, close
+
+need_superset() {
+  have superset || die "the superset CLI isn't on PATH"
+  [ -n "$WS" ] || die "SUPERSET_WORKSPACE_ID not set"
+}
+
+# The full id of Superset terminal $1: a full id, or a unique prefix (6+ characters) of a
+# terminal still running in this workspace. Dies when none or several match.
+term_id() {
+  local id="$1" ids n
+  case "$id" in s_*) die "$id is an Araniko session: run NAYO_HOST=araniko handoffs/bin/nayo $cmd …" ;; esac
+  [ ${#id} -ge 36 ] && { printf '%s' "$id"; return 0; }
+  [ ${#id} -ge 6 ] || die "$id: give at least 6 characters of the terminal id"
+  have jq || die "jq is needed to match a terminal id prefix"
+  ids=$(superset terminals list --workspace "$WS" --json 2>/dev/null | jq -r --arg p "$id" '
+    .sessions[]? | select((.exited | not) and (.terminalId | startswith($p))) | .terminalId' 2>/dev/null)
+  n=$(printf '%s' "$ids" | grep -c .)
+  case $n in
+    1) printf '%s' "$ids" ;;
+    0) die "no running terminal starting $id in this workspace" ;;
+    *) die "$id matches $n terminals: give more of it" ;;
+  esac
+}
+
+sup_err() { # Superset's error from its output $1, on one line
+  printf '%s\n' "$1" | sed -n 's/^Error: //p; /"error"/p' | head -n 1 | cut -c1-160 | grep . \
+    || printf '%s\n' "$1" | sed -n '/[^[:space:]]/{p;q;}' | cut -c1-160
+}
+
+# Type $2 into terminal $1 and press Enter, or (`--keys enter`) press Enter alone. Superset
+# reports whether Enter took (`submitted`); "typed but not submitted" exits non-zero.
+cmd_send() {
+  local id="${1:-}" full text out
+  [ -n "$id" ] && [ $# -ge 2 ] || die 'usage: nayo send <terminal> "<text>" | nayo send <terminal> --keys enter'
+  need_superset
+  full=$(term_id "$id") || exit 1
+  if [ "$2" = --keys ]; then
+    [ "${3:-}" = enter ] || die "--keys takes one key: enter"
+    out=$(superset terminals send --workspace "$WS" --terminal "$full" --keys enter --json 2>&1) \
+      || die "couldn't send to $id: $(sup_err "$out")"
+    echo "pressed Enter in $full"
+    return 0
   fi
-  exec ultron jarvis events --follow
+  text="$2"
+  out=$(superset terminals send --workspace "$WS" --terminal "$full" --text "$text" --json 2>&1) \
+    || die "couldn't send to $id: $(sup_err "$out")"
+  if have jq && [ "$(printf '%s' "$out" | jq -r '.submitted // empty' 2>/dev/null)" = false ]; then
+    die "typed but not submitted — run: nayo send $id --keys enter, then nayo read $id"
+  fi
+  echo "sent to $full (submitted)"
+}
+
+# Terminal $1's screen, last $2 lines, as plain text.
+cmd_read() {
+  local id="${1:-}" full out
+  [ -n "$id" ] || die "usage: nayo $cmd <terminal> [lines]"
+  need_superset
+  full=$(term_id "$id") || exit 1
+  out=$(superset terminals read --workspace "$WS" --terminal "$full" --max-lines "${2:-60}" --json 2>&1) \
+    || die "couldn't read $id: $(sup_err "$out")"
+  printf '%s\n' "$out" | { have jq && jq -r '.text // empty' || cat; }
+}
+
+# Close terminal $1: prints "closed <full id>", or "✗ couldn't close <id>: <Superset's error>"
+# and exits non-zero.
+cmd_close() {
+  local id="${1:-}" full out
+  [ -n "$id" ] || die "usage: nayo close <terminal>"
+  need_superset
+  full=$(term_id "$id") || exit 1
+  if out=$(superset terminals close --workspace "$WS" --terminal "$full" --json 2>&1); then
+    echo "closed $full"
+    return 0
+  fi
+  echo "✗ couldn't close $id: $(sup_err "$out") (the worker is still open)"
+  return 1
+}
+
+cmd_events() {
+  local ho
+  mkdir -p "$STATE"
+  if [ ! -f "$STATE/events.seen" ]; then # first run: learn what's already there, silently
+    : > "$STATE/events.seen"
+    while IFS= read -r ho; do
+      [ -n "$ho" ] && echo "ho $ho $(mtime "$ho") $(field status "$ho")" >> "$STATE/events.seen"
+    done <<EOF
+$(handoff_files)
+EOF
+  fi
+  echo $$ > "$STATE/events.pid"
+  while [ "$(cat "$STATE/events.pid" 2>/dev/null)" = $$ ]; do
+    events_tick
+    sleep "$EVENTS_SEC"
+  done
 }
 
 # ---------------------------------------------------------------- hooks
 
-# UserPromptSubmit, Jarvis's session only: after a long idle the prompt cache has
+# UserPromptSubmit, Nayo's terminal only: after a long idle the prompt cache has
 # expired, and the next turn would write the whole context again. Stop the prompt
-# once and suggest clearing; sending it again goes through.
+# once and suggest /clear; sending it again goes through.
 hook_prompt() {
-  local in sid tp prompt last gap ctx model price usd marker how
+  local in sid tp prompt me last gap ctx model price usd marker
   have jq || exit 0
   in=$(cat)
-  [ -n "$ME" ] && [ "$ME" = "$(jarvis_terminal)" ] || exit 0
+  me="${SUPERSET_TERMINAL_ID:-}"
+  [ -n "$me" ] && [ "$me" = "$(nayo_terminal)" ] || exit 0
   sid=$(printf '%s' "$in" | jq -r '.session_id // empty')
   tp=$(printf '%s' "$in" | jq -r '.transcript_path // empty')
   prompt=$(printf '%s' "$in" | jq -r '.prompt // empty')
@@ -1671,7 +1667,7 @@ hook_prompt() {
     '(.t | sub("\\.[0-9]+"; "") | fromdateiso8601) as $t | (($now - $t) / 60 | floor)' 2>/dev/null) || exit 0
   ctx=$(printf '%s' "$last" | jq -r '.u | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)')
   model=$(printf '%s' "$last" | jq -r '.m // ""')
-  [ "$gap" -ge "$JARVIS_IDLE_MIN" ] && [ "$ctx" -ge "$JARVIS_GUARD_TOKENS" ] || exit 0
+  [ "$gap" -ge "$NAYO_IDLE_MIN" ] && [ "$ctx" -ge "$NAYO_GUARD_TOKENS" ] || exit 0
 
   marker="$STATE/guard-$sid"
   if [ -f "$marker" ] && [ $(( $(now) - $(mtime "$marker") )) -lt 900 ]; then rm -f "$marker"; exit 0; fi
@@ -1680,15 +1676,12 @@ hook_prompt() {
     *fable*) price=20 ;; *opus-5-5*) price=8 ;; *opus*) price=10 ;; *sonnet*) price=4 ;; *haiku*) price=2 ;; *) price=10 ;;
   esac
   usd=$(awk -v t="$ctx" -v p="$price" 'BEGIN{printf "%.2f", t * p / 1000000}')
-  # a chat session has no typed /clear: the daemon restarts it fresh
-  how="/clear"
-  [ "$(transport_of "$ME")" = stream ] && how="Clear in the Ultron app (or ultron term clear $ME)"
-  jq -n --arg r "Jarvis has been idle ${gap} min, so its prompt cache has expired: this message would write all $((ctx / 1000))k tokens of context again (about \$${usd} at API prices). Cheaper: $how, then \"resume\" — Jarvis reloads from handoffs/OPEN.md. To go ahead anyway, send your message again." \
+  jq -n --arg r "Nayo has been idle ${gap} min, so its prompt cache has expired: this message would write all $((ctx / 1000))k tokens of context again (about \$${usd} at API prices). Cheaper: /clear, then \"resume\" — Nayo reloads from handoffs/OPEN.md. To go ahead anyway, send your message again." \
     '{decision: "block", reason: $r}'
 }
 
 # Statusline tap: Claude Code hands the statusline its rate-limit numbers. Save
-# them for `jarvis band`, then run the user's own statusline unchanged.
+# them for `nayo band`, then run the user's own statusline unchanged.
 cmd_statusline() {
   local in cmd tmp
   in=$(cat)
@@ -1698,11 +1691,11 @@ cmd_statusline() {
     printf '%s' "$in" | jq -c --argjson ts "$(now)" 'select(.rate_limits.five_hour) | .rate_limits + {ts: $ts}' \
       > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$STATE/usage.json"
     rm -f "$tmp"
-    cmd="${JARVIS_STATUSLINE_CMD:-$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)}"
+    cmd="${NAYO_STATUSLINE_CMD:-$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)}"
   else
-    cmd="${JARVIS_STATUSLINE_CMD:-}"
+    cmd="${NAYO_STATUSLINE_CMD:-}"
   fi
-  case "$cmd" in *"jarvis statusline"*) cmd="" ;; esac
+  case "$cmd" in *"nayo statusline"*) cmd="" ;; esac
   if [ -n "$cmd" ]; then printf '%s' "$in" | sh -c "$cmd"
   elif have jq; then printf '%s' "$in" | jq -r '"\(.model.display_name // "") · 5h \(.rate_limits.five_hour.used_percentage // "?" | tostring | .[0:4])%"'
   fi
@@ -1712,15 +1705,15 @@ cmd_statusline() {
 
 cmd_usage() {
   local audit proj since_arg json merged
-  have python3 || die "python3 is needed for jarvis usage"
-  have jq || die "jq is needed for jarvis usage"
+  have python3 || die "python3 is needed for nayo usage"
+  have jq || die "jq is needed for nayo usage"
   audit="$(cd "$(dirname "$0")" && pwd)/cc_usage_audit.py"
-  [ -f "$audit" ] || die "no $audit — re-run ultron-jarvis:setup"
+  [ -f "$audit" ] || die "no $audit — re-run nayo:setup"
   proj=$(printf '%s' "$ROOT" | sed 's#[^A-Za-z0-9]#-#g')
   set -- --project="$proj" \
-    --role worker='^You are a Jarvis worker' \
-    --role-tool orchestrator='ultron agent spawn|handoffs/bin/jarvis (start|status|spawn|merge)' \
-    --bash-category coordination='term (read|send|list|close)|chat (send|history)|handoffs/|OPEN\.md|jev\.sh|bin/jarvis' \
+    --role worker='^You are a (Nayo|Jarvis) worker' \
+    --role-tool orchestrator='superset agents create|handoffs/bin/nayo (start|status|spawn|merge)' \
+    --bash-category coordination='terminals (read|send|list|close)|handoffs/|OPEN\.md|jev\.sh|bin/nayo' \
     "$@"
   json=$(python3 "$audit" "$@" --json) || exit 1
   since_arg=$(printf '%s' "$json" | jq -r '.period[0]')
@@ -1729,33 +1722,17 @@ cmd_usage() {
     def usd: "$" + ((. * 100 | round) / 100 | tostring);
     def role(r): [.by_role | to_entries[] | select(.key == r or .key == (r + " > subagents")) | .value.usd] | add // 0;
     (role("orchestrator")) as $coord | (role("worker")) as $build
-    | "jarvis usage · \(.period[0][0:16]) → \(.period[1][0:16]) · \(.total_usd | usd) in this repo at API prices",
-      "  coordinating (Jarvis + its subagents): \($coord | usd)",
+    | "nayo usage · \(.period[0][0:16]) → \(.period[1][0:16]) · \(.total_usd | usd) in this repo at API prices",
+      "  coordinating (Nayo + its subagents): \($coord | usd)",
       "  building (workers + their subagents):  \($build | usd)",
       "  coordinating ÷ building: \(if $build > 0 then ($coord / $build * 100 | round) / 100 else "n/a" end)   (target ≤ 0.3)",
       "  merged handoffs: \($merged) · cost per merged handoff: \(if $merged > 0 then (($coord + $build) / $merged) | usd else "n/a" end)",
       "  worst 5-hour window: \(.peak_window_usd | usd) · most sessions in one 10-min slot: \(.peak_concurrent_sessions_10min)",
-      "  cache reloads after idle (Jarvis): \([.reloads[] | select(.role == "orchestrator" and .cause == "after idle")] | "\(map(.turns) | add // 0) turns, \(map(.usd) | add // 0 | usd)")",
+      "  cache reloads after idle (Nayo): \([.reloads[] | select(.role == "orchestrator" and .cause == "after idle")] | "\(map(.turns) | add // 0) turns, \(map(.usd) | add // 0 | usd)")",
       "",
-      "  Jarvis by model (for comparing coordinator configs):",
+      "  Nayo by model (for comparing coordinator configs):",
       ([.by_role_model[]? | select(.role == "orchestrator")] | sort_by(-.usd)[]
         | "    \(.model): \(.turns) turns · \(.usd | usd) · $\((.usd / .turns * 1000 | round) / 1000)/turn · avg ctx \((.ctx / .turns / 1000) | round)k")'
-  # The daemon's own waste figures for the same period (ultron usage report).
-  have ultron || return 0
-  ultron --json usage report --project "$ROOT" --since "$since_arg" \
-      --until "$(printf '%s' "$json" | jq -r '.period[1]')" 2>/dev/null | jq -r '
-    def usd: "$" + ((. * 100 | round) / 100 | tostring);
-    def pct: (. * 100 | round | tostring) + "%";
-    .waste // empty
-    | "",
-      "  Waste (ultron usage report):",
-      "  " + ([(if .usd_per_merged_handoff then "\(.usd_per_merged_handoff | usd) of worker spend per merged handoff (\(.merged_handoffs) merged)" else "no handoffs merged in this period" end),
-               (if .worker_past_150k_share then "\(.worker_past_150k_share | pct) of worker spend past 150k context" else empty end),
-               (if .briefs_redone > 0 then "\(.briefs_redone) brief\(if .briefs_redone > 1 then "s" else "" end) redone" else empty end)] | join(" · ")),
-      "  workers \(.worker_usd | usd) · Jarvis/Vision \(.jarvis_usd | usd)",
-      (.top_briefs[] | "    \(.title): \(.usd | usd) · \(.turns) turns · peak \(.peak_context / 1000 | floor)k"
-        + (if (.past_150k_share // 0) > 0 then " · \(.past_150k_share | pct) past 150k" else "" end)
-        + (if .sessions > 1 then " · run \(.sessions) times" else "" end))' || true
 }
 
 # ---------------------------------------------------------------- main
@@ -1766,11 +1743,8 @@ case "$cmd" in
   start) cmd_start "$@" ;;
   status) cmd_status ;;
   band) cmd_band ;;
-  screen) [ -n "${1:-}" ] || die "usage: jarvis screen <session> [lines]"; need_ultron; screen "$1" "${2:-60}" ;;
   spawn) cmd_spawn "$@" ;;
-  answer) cmd_answer "$@" ;;
   merge) cmd_merge "$@" ;;
-  clean-worktrees) cmd_clean_worktrees ;;
   events) cmd_events ;;
   usage) cmd_usage "$@" ;;
   statusline) cmd_statusline ;;
@@ -1779,5 +1753,9 @@ case "$cmd" in
       prompt) hook_prompt ;;
       *) exit 0 ;;
     esac ;;
-  *) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  clean-worktrees) cmd_clean_worktrees ;;
+  screen|read) cmd_read "$@" ;;
+  send) cmd_send "$@" ;;
+  close) cmd_close "$@" ;;
+  *) sed -n '2,/^# Settings live/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

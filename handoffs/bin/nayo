@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# nayo — runs the Nayo script of the host this session is in, with the same arguments:
+#
+#   nayo-superset   in a Superset terminal (SUPERSET_TERMINAL_ID set)
+#   nayo-araniko    in an Araniko session (ARANIKO_SESSION_ID set), or anywhere the
+#                   `araniko` daemon answers
+#
+# NAYO_HOST=superset|araniko overrides the pick. Both scripts share handoffs/OPEN.md
+# and handoffs/nayo.conf; `nayo help` (any unknown command) prints the chosen one's help.
+set -u
+
+dir=$(cd "$(dirname "$0")" && pwd)
+# JARVIS_HOST is the name from before the rename. TODO(remove after first public release)
+host="${NAYO_HOST:-${JARVIS_HOST:-}}"
+if [ -z "$host" ]; then
+  if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then host=superset
+  elif [ -n "${ARANIKO_SESSION_ID:-}" ]; then host=araniko
+  else
+    case "${1:-}" in
+      # every Claude session runs these: no host means no Nayo to guard, and the
+      # statusline tap and the band are the same in both scripts
+      hook) exit 0 ;;
+      statusline|band) host=superset ;;
+      # `daemon status` asks without starting one (other araniko calls auto-start it)
+      *) command -v araniko >/dev/null 2>&1 \
+           && araniko daemon status --json 2>/dev/null | grep -q '"pid"' && host=araniko ;;
+    esac
+  fi
+fi
+
+case "$host" in
+  superset|araniko) exec "$dir/nayo-$host" "$@" ;;
+  "") echo "nayo: no host — run it in a Superset terminal (SUPERSET_TERMINAL_ID) or an Araniko session (ARANIKO_SESSION_ID), or set NAYO_HOST=superset|araniko" >&2 ;;
+  *) echo "nayo: NAYO_HOST is superset or araniko, not $host" >&2 ;;
+esac
+exit 1

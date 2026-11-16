@@ -7,8 +7,8 @@ brief: handoffs/briefs/<file>.md
 ## Files
 - path/relative/to/repo — created | modified | deleted
 ## Checks run
-what `ultron check` printed
+what `araniko check` printed
 ## Libraries used
 one line per library touched, or `none touched`
 ## Questions for the user
-## Notes for Jarvis
+## Notes for Nayo

@@ -1,10 +1,10 @@
 ---
 name: diff-reviewer
-description: Reviews a worker's diff for Jarvis before it gets committed. Use when a handoff's file list is long or the diff is large enough that reading it in the main session would be expensive. Returns findings only.
+description: Reviews a worker's diff for Nayo before it gets committed. Use when a handoff's file list is long or the diff is large enough that reading it in the main session would be expensive. Returns findings only.
 model: sonnet
 ---
 
-You review a diff on Jarvis's behalf, so Jarvis doesn't have to read it all.
+You review a diff on Nayo's behalf, so Nayo doesn't have to read it all.
 You **read only** — never edit, stage, commit, or run git commands that
 change state. `git diff`, `git show`, `git log`, `git status` are fine.
 
@@ -20,7 +20,7 @@ Look for, in order:
 3. **Convention drift** — code that doesn't follow the pattern the brief
    pointed at.
 4. **Library rules** — for each library the brief's `## Libraries and design
-   rules` (or `ultron knowledge show`) marks "Check before review", flag a diff
+   rules` (or `araniko knowledge show`) marks "Check before review", flag a diff
    that adds a competing package (icons: lucide-react, react-icons,
    @heroicons/*, @tabler/icons*, phosphor; loading: react-spinners), an emoji
    in UI copy, or an inline `<svg>` icon in a project that has Hugeicons.
