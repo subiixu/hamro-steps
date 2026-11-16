@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# jev.sh — optional Jev (TypeSafe System One) helper for Jarvis.
+# jev.sh — optional Jev (TypeSafe System One) helper for Nayo.
 #
 #   jev.sh brief <brief.md>            lint the brief; log a shadow routing verdict
-#   jev.sh triage <terminalId>...      one status line per worker terminal (Superset, or an Ultron s_… session)
+#   jev.sh triage <terminalId>...      one status line per worker terminal (Superset, or an Araniko s_… session)
 #   jev.sh outcome <brief.md> <clean|corrected|escalated|respawned>
 #   jev.sh report                      summarise handoffs/.jev/log.jsonl
 #   --dry-run (anywhere)               print the request payload, send nothing
 #
 # Jev advises, never decides. Fail-open: no TYPESAFE_API_KEY, no jq/curl, an API
-# error or a timeout prints "jev: skipped (<reason>)" and exits 0, and Jarvis
+# error or a timeout prints "jev: skipped (<reason>)" and exits 0, and Nayo
 # carries on with the prose rules. Works on the stock macOS bash (3.2).
 set -u
 
@@ -148,7 +148,7 @@ brief_payload() { # $1 = state text
 }
 
 # A brief that may touch UI files (app/, site/, *.tsx, *.css, *.html) must carry
-# `## Libraries and design rules`, which jarvis spawn writes from `ultron knowledge
+# `## Libraries and design rules`, which nayo spawn writes from `araniko knowledge
 # show`. Structural and local, so it runs without TYPESAFE_API_KEY; prints why and
 # returns 1 when the brief fails it.
 ui_rules_check() { # $1 = brief
@@ -159,7 +159,7 @@ ui_rules_check() { # $1 = brief
     { on = 0 }
   ' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])(app|site)/|\.(tsx|css|html)([^A-Za-z0-9]|$)' || return 0
   grep -q '^## Libraries and design rules' "$1" && return 0
-  echo "jev: brief lint — it may touch UI files but has no ## Libraries and design rules section (jarvis spawn writes it from ultron knowledge show)"
+  echo "jev: brief lint — it may touch UI files but has no ## Libraries and design rules section (nayo spawn writes it from araniko knowledge show)"
   return 1
 }
 
@@ -169,7 +169,7 @@ cmd_brief() {
   ui_rules_check "$f" || exit 1
   reason=$(ready) || skip "$reason"
 
-  # The header carries Jarvis's own worker/model/effort; Jev must not see it.
+  # The header carries Nayo's own worker/model/effort; Jev must not see it.
   header=$(awk '/^## /{exit} {print}' "$f")
   # The stamped libraries section is the user's shared knowledge, not the brief: it stays here.
   state=$( { sed -n '1p' "$f"; awk '/^## Questions first/{exit} /^## /{p=1; lib=($0 ~ /^## Libraries and design rules/)} p && !lib' "$f"; } | clean )
@@ -190,7 +190,7 @@ cmd_brief() {
     # "opus (amber band; fable-tier task)" was a fable-tier call: compare on intent.
     | (($jmodel | capture("(?<m>[a-z0-9.-]+)-tier").m) // ($jmodel | split(" ")[0])) as $intended
     | {ts: $ts, kind: "brief", brief: $brief, band: $band,
-       jarvis: {worker: $worker, model: $jmodel, effort: $effort, tier: ($intended | tier_of)},
+       nayo: {worker: $worker, model: $jmodel, effort: $effort, tier: ($intended | tier_of)},
        lint: {files: p("lint_files"), pattern: p("lint_pattern"), done: p("lint_done"),
               fence: p("lint_fence"), prior: p("lint_prior")},
        route: {done_verifiable: p("done_verifiable"), shape_undecided: p("shape_undecided"),
@@ -209,7 +209,7 @@ cmd_brief() {
        input_tokens: $r.usage.input_tokens, seconds: $r.seconds}') || skip "unexpected API response"
   log_row "$row"
 
-  # Shadow mode: the routing verdict is logged, never printed, so it can't anchor Jarvis.
+  # Shadow mode: the routing verdict is logged, never printed, so it can't anchor Nayo.
   printf '%s' "$row" | jq -r '
     def why: {files: "names the exact files", pattern: "names an existing pattern to copy",
       done: "states done + the command that proves it", fence: "fences may-touch and must-not-touch",
@@ -247,8 +247,8 @@ triage_one() { # $1 = id, $2 = file ("" = read the live terminal), $3 = jev usab
   local id="$1" src="$2" jev="$3" text tail_ state="" conf="" source="" note="" resp rc read shown=0
   if [ -n "$src" ]; then text=$(cat "$src" 2>/dev/null)
   elif case "$id" in s_*) true ;; *) false ;; esac; then
-    # an Ultron session: its screen, or for a chat session its conversation
-    text=$("$(dirname "$0")/jarvis-ultron" screen "$id" 60 2>/dev/null)
+    # an Araniko session: its screen, or for a chat session its conversation
+    text=$("$(dirname "$0")/nayo-araniko" screen "$id" 60 2>/dev/null)
   else
     text=$(superset terminals read --workspace "${SUPERSET_WORKSPACE_ID:-}" --terminal "$id" \
       --max-lines 60 --json 2>/dev/null)
@@ -257,7 +257,7 @@ triage_one() { # $1 = id, $2 = file ("" = read the live terminal), $3 = jev usab
   fi
   if [ -z "$text" ]; then
     case "$id" in
-      s_*) hint="ultron term read" ;;
+      s_*) hint="araniko term read" ;;
       *) hint="superset terminals read" ;;
     esac
     echo "$id unreadable — check it with $hint"
@@ -338,19 +338,19 @@ cmd_report() {
     (map(select(.kind == "outcome")) | map({key: .brief, value: .outcome}) | from_entries) as $out
     | (map(select(.kind == "brief")) | group_by(.brief) | map(.[-1])
        | map(. + {outcome: ($out[.brief] // "open"),
-                  rel: ((.jev_tier | rank) as $j | (.jarvis.tier | rank) as $k
+                  rel: ((.jev_tier | rank) as $j | (.nayo.tier | rank) as $k
                         | if $j == null or $k == null then "unknown"
                           elif $j < $k then "jev lower" elif $j > $k then "jev higher" else "same" end)})) as $b
     | map(select(.kind == "triage")) as $t
     | ($b | map(select(.outcome != "open")) | length) as $n
     | "Briefs: \($b | length) logged, \($n) with an outcome (graduation review needs 30)",
       "",
-      "Jev vs Jarvis tier: \($b | tally(.rel))",
+      "Jev vs Nayo tier: \($b | tally(.rel))",
       ($b | group_by(.rel)[] | "  \(.[0].rel) → \(tally(.outcome))"),
       "",
-      "Tier pairs (jarvis → jev): \($b | tally("\(.jarvis.tier // "?") → \(.jev_tier)"))",
+      "Tier pairs (nayo → jev): \($b | tally("\(.nayo.tier // "?") → \(.jev_tier)"))",
       ($b | map(select(.outcome == "escalated" or .outcome == "respawned")
-                | select(((.jarvis.tier | rank) // 0) - ((.jev_tier | rank) // 0) >= 2))
+                | select(((.nayo.tier | rank) // 0) - ((.jev_tier | rank) // 0) >= 2))
           | if length > 0 then "  ! Jev was two tiers too low on: \(map(.brief) | join(", "))" else empty end),
       "",
       "Lint: \($b | map(select([.lint.files, .lint.pattern, .lint.done, .lint.fence] | any(. < 0.5))) | length) of \($b | length) briefs flagged",
@@ -359,7 +359,7 @@ cmd_report() {
       "",
       (if ($t | length) == 0 then "Triage: none logged"
        else "Triage: \($t | length) reads · \($t | tally(.state))",
-            "  lines shown \($t | map(.lines_shown) | add) of \($t | map(.lines_read) | add) read (\((1 - (($t | map(.lines_shown) | add) / ([($t | map(.lines_read) | add), 1] | max))) * 100 | round)% kept out of Jarvis'"'"'s context)" end),
+            "  lines shown \($t | map(.lines_shown) | add) of \($t | map(.lines_read) | add) read (\((1 - (($t | map(.lines_shown) | add) / ([($t | map(.lines_read) | add), 1] | max))) * 100 | round)% kept out of Nayo'"'"'s context)" end),
       "",
       "Spend: \([.[] | .input_tokens // 0] | add) brief input tokens logged"
   ' "$LOG"

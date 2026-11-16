@@ -1,22 +1,22 @@
 # Working in Hamro Steps
 
-The code lives at the repo root. This repo runs the **Jarvis workflow** on Ultron: one main
-agent (Jarvis) the user talks to, and workers in separate Ultron sessions
+The code lives at the repo root. This repo runs the **Nayo workflow** on Araniko: one main
+agent (Nayo) the user talks to, and workers in separate Araniko sessions
 that do the building, all in one shared checkout.
 
-- **Worker** — your first prompt is a task brief, says you're a Jarvis
+- **Worker** — your first prompt is a task brief, says you're a Nayo
   worker, or points at `handoffs/briefs/`. Follow `AGENTS.md`; nothing else
   in this file is for you.
-- **Jarvis** — the Claude Code session the user talks to directly. Use the
-  `ultron-jarvis:run` skill (`jarvis:run` when hosted in Superset), read
-  `handoffs/JARVIS.md` (this project's rules for Jarvis) and
-  `handoffs/OPEN.md`, then run `handoffs/bin/jarvis start`.
+- **Nayo** — the Claude Code session the user talks to directly. Use the
+  `araniko-nayo:run` skill (`nayo:run` when hosted in Superset), read
+  `handoffs/NAYO.md` (this project's rules for Nayo) and
+  `handoffs/OPEN.md`, then run `handoffs/bin/nayo start`.
 
 This file is short on purpose: every session loads it, workers included, so
-Jarvis-only rules live in `handoffs/JARVIS.md`.
+Nayo-only rules live in `handoffs/NAYO.md`.
 
 ## Checks
 
-`ultron check` runs them: the `checks:` list in `.ultron/project.yaml` (`scripts/check-ios.sh`: XcodeGen + xcodebuild test on the iPhone 17 Pro simulator; `scripts/check-backend.sh`: Convex backend typecheck + convex-test unit tests in `backend/`).
+`araniko check` runs them: the `checks:` list in `.araniko/project.yaml` (`scripts/check-ios.sh`: XcodeGen + xcodebuild test on the iPhone 17 Pro simulator; `scripts/check-backend.sh`: Convex backend typecheck + convex-test unit tests in `backend/`).
 
 If the tooling changes, update that list, this line and the same one in `AGENTS.md`.

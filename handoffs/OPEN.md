@@ -1,13 +1,13 @@
 # Open items
 
-Jarvis reads this first, every session, and keeps it current. One line per
+Nayo reads this first, every session, and keeps it current. One line per
 item; an item goes in when it opens and comes out when it's done. Don't
-rebuild "what's pending" by searching the handoff folders. Before Jarvis
+rebuild "what's pending" by searching the handoff folders. Before Nayo
 stops, this file must hold everything a fresh session needs: the user may
-clear Jarvis after a long idle.
+clear Nayo after a long idle.
 
-Jarvis session: s_11ed44f2
-Usage band: green (5h 5% used, 18:41)
+Nayo session: s_d5f2b452
+Usage band: green (the 5-hour window has reset since the last reading (1177 min ago), 14:24)
 
 ## Questions for the user
 - manual test (redesign, largest text): Settings › Accessibility › Larger Text at max, then scroll Health how-to, goal presets, Family settings People + Remove, status expiry chips, Change name or goal, Delete account. Nothing cut off or unreachable? (second opinion on phase 2 flagged these as unchecked)
@@ -19,12 +19,12 @@ Usage band: green (5h 5% used, 18:41)
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-<!-- `jarvis spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
-<!-- `jarvis merge` removes the line -->
+<!-- `nayo spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
+<!-- `nayo merge` removes the line -->
 
-## Waiting on Jarvis
+## Waiting on Nayo
 
 ## To-do
-- `handoffs/bin/jarvis send`/`read <id>` print the usage text instead of acting (seen 2026-11-14); use `ultron term send/read` meanwhile.
+- `handoffs/bin/nayo send`/`read <id>` print the usage text instead of acting (seen 2026-11-14); use `araniko term send/read` meanwhile.
 - TESTFLIGHT_URL in web/invite/index.html (and InviteMessage.installURL in the app) once the user has a public TestFlight link.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.

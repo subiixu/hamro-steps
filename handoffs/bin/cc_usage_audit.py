@@ -10,8 +10,8 @@ peak 5-hour burn.
 Local only: no network calls, nothing leaves your machine. Python 3.8+, no
 dependencies.
 
-Vendored into Jarvis from https://github.com/gorock007/cc-usage-audit (MIT), with
-one addition: the by_role_model aggregate that `jarvis usage` reads.
+Vendored into Nayo from https://github.com/gorock007/cc-usage-audit (MIT), with
+one addition: the by_role_model aggregate that `nayo usage` reads.
 """
 import argparse, collections, datetime as dt, glob, json, os, re, statistics, sys
 
