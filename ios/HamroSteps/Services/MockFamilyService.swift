@@ -346,6 +346,33 @@ actor MockFamilyService: FamilyService {
         )
     }
 
+    /// Same per-day rules as `familyWeek`: a closed day uses its snapshot,
+    /// today (and a closed day with no snapshot) the live total against the
+    /// current goal, days before the family are flagged with no total.
+    func familyHistory(familyId: String, days count: Int) async throws -> FamilyHistory {
+        try await begin("familyHistory")
+        try requireMember(familyId)
+        guard [7, 30, 90].contains(count) else { throw FamilyServiceError.unavailable("invalid days") }
+        let family = families[familyId]!
+        let date = now()
+        let today = NepalDay.string(for: date)
+        guard let todayStart = NepalDay.start(of: today) else { throw FamilyServiceError.unavailable("bad day") }
+        let goal = family.dailyGoal
+        let days = (0..<(2 * count)).reversed().compactMap { offset -> FamilyHistoryDay? in
+            guard let start = NepalDay.calendar.date(byAdding: .day, value: -offset, to: todayStart) else { return nil }
+            let day = NepalDay.string(for: start)
+            if day < family.createdDay {
+                return FamilyHistoryDay(day: day, total: 0, goal: goal, hit: false, isBeforeFamily: true)
+            }
+            if day < today, let closed = family.closedDays[day] {
+                return FamilyHistoryDay(day: day, total: closed.total, goal: closed.goal, hit: closed.hit, isBeforeFamily: false)
+            }
+            let total = liveTotal(family, day: day)
+            return FamilyHistoryDay(day: day, total: total, goal: goal, hit: total >= goal, isBeforeFamily: false)
+        }
+        return FamilyHistory(today: today, days: days)
+    }
+
     nonisolated func familyTodayUpdates(familyId: String) -> AsyncStream<FamilyToday> {
         AsyncStream { continuation in
             let token = UUID()
@@ -595,6 +622,14 @@ extension MockFamilyService {
         for (offset, total) in pastTotals.enumerated() {
             guard let day = NepalDay.calendar.date(byAdding: .day, value: -(offset + 1), to: todayStart) else { continue }
             closed[NepalDay.string(for: day)] = total
+        }
+        // Older closed days back to when the families started, for History:
+        // varied, some hit, slowly rising so the trend has something to say.
+        let familyAge = NepalDay.calendar.dateComponents([.day], from: NepalDay.start(of: longAgo)!, to: todayStart).day ?? 0
+        for offset in stride(from: pastTotals.count + 1, through: familyAge, by: 1) {
+            guard let day = NepalDay.calendar.date(byAdding: .day, value: -offset, to: todayStart) else { continue }
+            let rising = 42_000 + (familyAge - offset) * 90
+            closed[NepalDay.string(for: day)] = rising + (offset * 7_919) % 19_000 - 9_000
         }
         // Members counted at each close, with no per-member steps seeded.
         func snapshots(_ totals: [String: Int], goal: Int, members: [String]) -> [String: ClosedDay] {

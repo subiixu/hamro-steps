@@ -64,6 +64,10 @@ struct ConvexFamilyService: FamilyService {
         try await query("home:familyWeek", ["familyId": .string(familyId)])
     }
 
+    func familyHistory(familyId: String, days: Int) async throws -> FamilyHistory {
+        try await query("home:familyHistory", ["familyId": .string(familyId), "days": .int(days)])
+    }
+
     func familyTodayUpdates(familyId: String) -> AsyncStream<FamilyToday> {
         connection.updates("home:familyToday", args: ["familyId": .string(familyId)], as: FamilyToday.self)
     }

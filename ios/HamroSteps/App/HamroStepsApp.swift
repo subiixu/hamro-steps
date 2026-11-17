@@ -321,6 +321,10 @@ struct HomeStateFamily: FamilyService {
         return week
     }
 
+    func familyHistory(familyId: String, days: Int) async throws -> FamilyHistory {
+        try await base.familyHistory(familyId: familyId, days: days)
+    }
+
     func createFamily(name: String, dailyGoal: Int) async throws -> FamilySummary {
         try await base.createFamily(name: name, dailyGoal: dailyGoal)
     }

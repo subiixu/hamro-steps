@@ -179,6 +179,28 @@ struct FamilyWeekDay: Codable, Hashable, Sendable, Identifiable {
     var id: String { day }
 }
 
+/// `familyHistory({familyId, days})`: 2 × `days` Nepal days ending today,
+/// oldest first. The History screen shows the last `days`; the ones before
+/// are only for the "vs the previous N days" comparison.
+struct FamilyHistory: Codable, Hashable, Sendable {
+    /// Nepal day, "YYYY-MM-DD".
+    var today: String
+    var days: [FamilyHistoryDay]
+}
+
+struct FamilyHistoryDay: Codable, Hashable, Sendable, Identifiable {
+    /// Nepal day, "YYYY-MM-DD".
+    var day: String
+    var total: Int
+    /// The goal that day (frozen at the day's close).
+    var goal: Int
+    var hit: Bool
+    /// Before the family existed: left out of the chart and the trends.
+    var isBeforeFamily: Bool
+
+    var id: String { day }
+}
+
 /// One entry of the `syncSteps({days})` payload.
 struct StepDay: Codable, Hashable, Sendable {
     /// Nepal day, "YYYY-MM-DD".

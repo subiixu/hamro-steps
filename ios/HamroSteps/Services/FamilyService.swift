@@ -26,9 +26,20 @@ protocol FamilyService: Sendable {
     func familyToday(familyId: String) async throws -> FamilyToday
     /// Monday to Sunday of the current Nepal week.
     func familyWeek(familyId: String) async throws -> FamilyWeek
+    /// 2 × `days` Nepal days ending today (`days` is 7, 30 or 90): the
+    /// family's daily totals only, never per member.
+    func familyHistory(familyId: String, days: Int) async throws -> FamilyHistory
     /// Live `familyToday`: the current value first, then every change. Ends
     /// when the caller stops listening.
     func familyTodayUpdates(familyId: String) -> AsyncStream<FamilyToday>
+}
+
+extension FamilyService {
+    /// Only for test stubs written before History; Convex, the mock and the
+    /// Debug wrapper all implement it. Shows as "can't load" on History.
+    func familyHistory(familyId: String, days: Int) async throws -> FamilyHistory {
+        throw FamilyServiceError.unavailable("familyHistory")
+    }
 }
 
 /// What the Me edit screen saves in one go.

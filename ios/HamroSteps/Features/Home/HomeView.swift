@@ -231,7 +231,18 @@ struct HomeView: View {
             ContributionsCard(members: members, currentUserId: session.user?.id, familyTotal: home.total)
                 .id("everyone")
             if !home.week.isEmpty {
-                WeekCard(days: home.week, today: home.today?.day).id("week")
+                if let familyId = home.selectedFamilyId {
+                    NavigationLink {
+                        HistoryView(familyId: familyId)
+                    } label: {
+                        WeekCard(days: home.week, today: home.today?.day, opensHistory: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Opens History: your family's steps and your own over 7, 30 or 90 days"))
+                    .id("week")
+                } else {
+                    WeekCard(days: home.week, today: home.today?.day).id("week")
+                }
             }
             if let feed {
                 FeedCard(model: feed, highlightedEventId: highlightedEventId).id("moments")
@@ -678,7 +689,10 @@ struct FeedCard: View {
 struct WeekCard: View {
     let days: [FamilyWeekDay]
     let today: String?
+    /// Shows a "See history" line; Home wraps the card in a link to History.
+    var opensHistory = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .subheadline) private var chevronSize: CGFloat = 14
 
     private var hitCount: Int { days.filter { $0.hit && !$0.isBeforeFamily }.count }
 
@@ -704,8 +718,18 @@ struct WeekCard: View {
                         WeekDayMarker(day: day, isToday: day.day == today)
                     }
                 }
+                if opensHistory {
+                    HStack(spacing: 4) {
+                        Text("See history")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Icon.chevronRight.size(chevronSize)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.accentText)
+                }
             }
         }
+        .contentShape(.rect(cornerRadius: Bento.radius))
     }
 
     @ViewBuilder
