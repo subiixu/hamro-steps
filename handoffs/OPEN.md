@@ -19,7 +19,6 @@ Usage band: green (5h 15% used, 12:56)
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
-- 2026-11-17 12:57 · claude/claude-opus-5-5 medium · term s_68f9927f · handoffs/briefs/2026-11-17-1305-history-trend-fixes.md
 <!-- `nayo spawn` adds: - <date HH:MM> · claude/claude-opus-5-5 high · term <id> · handoffs/briefs/<file>.md -->
 <!-- `nayo merge` removes the line -->
 
