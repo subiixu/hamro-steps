@@ -12,10 +12,11 @@ Usage band: green (5h 15% used, 12:56)
 ## Questions for the user
 - manual test (redesign, largest text): Settings › Accessibility › Larger Text at max, then scroll Health how-to, goal presets, Family settings People + Remove, status expiry chips, Change name or goal, Delete account. Nothing cut off or unreachable? (second opinion on phase 2 flagged these as unchecked)
 - manual test (live app, past Home): user confirmed onboarding → Home works on their phone (2026-11-14). Still unchecked: walk push to a 2nd phone, reactions, sign out.
-- TestFlight 0.1.0 (7) archived 2026-11-15: redesign + Shared Stride icon + profile editing (photo, city, birthday) (supersedes 3–6). Uploaded to App Store Connect 2026-11-15 20:33 (xcodebuild -exportArchive with ASC API key WZVC3GLC68, issuer in ~/BIXUSTUDIO/DEV/ghosty/CONTEXT.md); testers added by the user.
+- TestFlight 0.1.0 (8) uploaded to App Store Connect 2026-11-17: History screen (T-44) on top of build 7 (redesign, icon, profile editing). Changelog in CHANGELOG.md. Testers were added by the user.
 - manual test (privacy link): on a phone, tap "Privacy policy" on Welcome and on Me → Safari opens the privacy page; check the Me row looks right (not seen on screen yet).
 - manual test (web pages): open web/invite/index.html?code=K7M2QX and web/privacy/index.html in Safari; check dark mode; founders review the DRAFT privacy text + set real contact email and TestFlight URL.
 - manual test (T-39 profile, needs a new build): Me › Edit profile: choose a photo from your library, take one with the camera, remove it; set Lives in + birthday, Save. On a 2nd phone, tap that person on Home: photo, city · their local time, birthday (no year). Backend is live on dev.
+- manual test (T-44 history, build 8): Home › tap "This week" › History. Family: 7/30/90 days, goal line, goal days in green, trend lines read sensibly. Me: your own Health steps, "Only you see this". Then Larger Text at max: nothing cut off.
 <!-- - <date> · <slug> · Q1 …  (batched from worker handoffs; remove when answered and passed back) -->
 
 ## Running workers
@@ -25,7 +26,6 @@ Usage band: green (5h 15% used, 12:56)
 ## Waiting on Nayo
 
 ## To-do
-- T-44 history: backend merged (e908cee) and deployed to Convex dev 2026-11-17; after the iOS handoff merges, build 8 for TestFlight.
 - `handoffs/bin/nayo send`/`read <id>` print the usage text instead of acting (seen 2026-11-14); use `araniko term send/read` meanwhile.
 - TESTFLIGHT_URL in web/invite/index.html (and InviteMessage.installURL in the app) once the user has a public TestFlight link.
 - Context: PRD = docs/PRD.md; Convex dev deployment harmless-dolphin-642 (env set); web live at https://subiixu.github.io/hamro-steps/.
