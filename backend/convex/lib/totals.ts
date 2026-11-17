@@ -54,3 +54,23 @@ export async function recomputeSnapshot(
   if (total !== snap.total || hit !== snap.hit) await ctx.db.patch(snap._id, { total, hit });
   return hit;
 }
+
+/**
+ * One past-or-present day of a family's progress, shared by `familyWeek` and
+ * `familyHistory` so they can't disagree. A closed day (before `today`) uses
+ * its midnight snapshot (frozen goal); today, and closed days with no
+ * snapshot, use the live total against the current goal.
+ */
+export async function familyDayProgress(
+  ctx: QueryCtx,
+  family: Doc<"families">,
+  day: string,
+  today: string,
+  members: Doc<"memberships">[],
+): Promise<{ total: number; goal: number; hit: boolean }> {
+  const snap = day < today ? await snapshot(ctx, family._id, day) : null;
+  if (snap) return { total: snap.total, goal: snap.goal, hit: snap.hit };
+  const total = await liveTotal(ctx, family._id, day, members);
+  const goal = family.dailyGoal;
+  return { total, goal, hit: total >= goal };
+}

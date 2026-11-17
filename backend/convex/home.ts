@@ -4,8 +4,9 @@ import { familyMembers, requireMember } from "./lib/access";
 import { activeStatus, openWalk } from "./lib/activity";
 import { MAX_MEMBERS } from "./lib/constants";
 import { memberProfile } from "./lib/profile";
-import { nepalDay, nepalDayStart, weekDays } from "./lib/nepalDay";
-import { liveTotal, snapshot, stepsRow } from "./lib/totals";
+import { addDays, nepalDay, nepalDayStart, weekDays } from "./lib/nepalDay";
+import { fail } from "./lib/errors";
+import { familyDayProgress, stepsRow } from "./lib/totals";
 
 /**
  * Today's family progress, members in fixed order (never ranked).
@@ -84,15 +85,41 @@ export const familyWeek = query({
         days.push({ day, total: 0, goal: family.dailyGoal, hit: false, isFuture, isBeforeFamily });
         continue;
       }
-      const snap = day < today ? await snapshot(ctx, family._id, day) : null;
-      if (snap) {
-        days.push({ day, total: snap.total, goal: snap.goal, hit: snap.hit, isFuture, isBeforeFamily });
-        continue;
-      }
-      const total = await liveTotal(ctx, family._id, day, members);
-      const goal = family.dailyGoal;
-      days.push({ day, total, goal, hit: total >= goal, isFuture, isBeforeFamily });
+      const progress = await familyDayProgress(ctx, family, day, today, members);
+      days.push({ day, ...progress, isFuture, isBeforeFamily });
     }
     return { today, weekStart: days[0]!.day, startsAt: nepalDayStart(days[0]!.day), days };
+  },
+});
+
+/** Ranges the History screen offers, in days. */
+const HISTORY_RANGES = [7, 30, 90];
+
+/**
+ * Daily family totals vs goal for 2 × `days` Nepal days ending today,
+ * oldest first: the client shows the last `days` and compares them with the
+ * `days` before. Same per-day rules as `familyWeek`. Days before the family
+ * existed are flagged and not totalled.
+ */
+export const familyHistory = query({
+  args: { familyId: v.id("families"), days: v.number() },
+  handler: async (ctx, args) => {
+    const { family } = await requireMember(ctx, args.familyId);
+    if (!HISTORY_RANGES.includes(args.days)) fail("invalid_day", "days must be 7, 30 or 90");
+    const today = nepalDay(Date.now());
+    const createdDay = nepalDay(family.createdAt);
+    const members = await familyMembers(ctx, family._id);
+    const count = args.days * 2;
+    const days = [];
+    for (let i = count - 1; i >= 0; i--) {
+      const day = addDays(today, -i);
+      if (day < createdDay) {
+        days.push({ day, total: 0, goal: family.dailyGoal, hit: false, isBeforeFamily: true });
+        continue;
+      }
+      const progress = await familyDayProgress(ctx, family, day, today, members);
+      days.push({ day, ...progress, isBeforeFamily: false });
+    }
+    return { today, days };
   },
 });
