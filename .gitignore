@@ -3,3 +3,4 @@ convex-tutorial/
 # Nayo and Jev local state
 handoffs/.nayo/
 handoffs/.jev/
+handoffs/nayo.local.conf

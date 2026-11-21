@@ -6,8 +6,8 @@ rebuild "what's pending" by searching the handoff folders. Before Nayo
 stops, this file must hold everything a fresh session needs: the user may
 clear Nayo after a long idle.
 
-Nayo session: s_b175cbae
-Usage band: green (5h 15% used, 12:56)
+Nayo session: s_9d079f7b
+Usage band: green (the 5-hour window has reset since the last reading (6569 min ago), 02:29)
 
 ## Questions for the user
 - manual test (redesign, largest text): Settings › Accessibility › Larger Text at max, then scroll Health how-to, goal presets, Family settings People + Remove, status expiry chips, Change name or goal, Delete account. Nothing cut off or unreachable? (second opinion on phase 2 flagged these as unchecked)

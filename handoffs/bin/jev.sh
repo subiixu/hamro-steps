@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # jev.sh — optional Jev (TypeSafe System One) helper for Nayo.
 #
-#   jev.sh brief <brief.md>            lint the brief; log a shadow routing verdict
+#   jev.sh brief <brief.md>            lint the brief (Acceptance, File scope, UI rules); log a
+#                                      shadow routing verdict
 #   jev.sh triage <terminalId>...      one status line per worker terminal (Superset, or an Araniko s_… session)
 #   jev.sh outcome <brief.md> <clean|corrected|escalated|respawned>
 #   jev.sh report                      summarise handoffs/.jev/log.jsonl
@@ -147,7 +148,8 @@ brief_payload() { # $1 = state text
     }}'
 }
 
-# A brief that may touch UI files (app/, site/, *.tsx, *.css, *.html) must carry
+# A brief that may touch UI files (app/, site/, *.tsx, *.css, *.html; its May touch line or
+# ## File scope) must carry
 # `## Libraries and design rules`, which nayo spawn writes from `araniko knowledge
 # show`. Structural and local, so it runs without TYPESAFE_API_KEY; prints why and
 # returns 1 when the brief fails it.
@@ -157,15 +159,41 @@ ui_rules_check() { # $1 = brief
     l ~ /^[-*][[:space:]]+(\*\*)?may touch/ { on = 1; print; next }
     on && (/^[[:space:]][[:space:]]/ || /^[^-*#[:space:]]/) { print; next }
     { on = 0 }
+    /^## / { scope = ($0 ~ /^## File scope[[:space:]]*$/); next }
+    scope
   ' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])(app|site)/|\.(tsx|css|html)([^A-Za-z0-9]|$)' || return 0
   grep -q '^## Libraries and design rules' "$1" && return 0
   echo "jev: brief lint — it may touch UI files but has no ## Libraries and design rules section (nayo spawn writes it from araniko knowledge show)"
   return 1
 }
 
+# The first real line of brief $2's "## $1" section: not blank, not a one-line HTML comment,
+# not a <placeholder> (a leading bullet and backtick are looked past).
+section_line() {
+  awk -v want="## $1" '/^## /{sub(/[[:space:]]+$/, ""); on = ($0 == want); next} on' "$2" \
+    | grep -v '^[[:space:]]*<!--.*-->[[:space:]]*$' \
+    | sed -E 's/^[[:space:]]*([-*][[:space:]]+)?`?//' | grep -v '^[[:space:]]*$' | grep -v '^<' | head -n 1
+}
+
+# A new brief must carry ## Acceptance (one command that fails now and passes when done) and
+# ## File scope (the globs it may touch); nayo merge checks both. Structural and local, like
+# ui_rules_check. A brief spawned before (a real started: line, so an --answers or --redo
+# respawn, maybe of an older brief) is let through: merge skips its checks with a line.
+fields_check() { # $1 = brief
+  local started miss=""
+  started=$(sed -n 's/^started:[[:space:]]*//p' "$1" | head -n 1)
+  case "$started" in ""|\<*) ;; *) return 0 ;; esac
+  [ -n "$(section_line Acceptance "$1")" ] || miss="## Acceptance (one command that fails now and must pass when done)"
+  [ -n "$(section_line 'File scope' "$1")" ] || miss="${miss:+$miss and }## File scope (repo-relative globs it may touch)"
+  [ -z "$miss" ] && return 0
+  echo "jev: brief lint — no $miss; see handoffs/briefs/TEMPLATE.md"
+  return 1
+}
+
 cmd_brief() {
   local f="${1:-}" reason header state resp rc row band
   [ -n "$f" ] && [ -f "$f" ] || { echo "jev: no such brief: $f" >&2; exit 2; }
+  fields_check "$f" || exit 1
   ui_rules_check "$f" || exit 1
   reason=$(ready) || skip "$reason"
 
@@ -173,7 +201,7 @@ cmd_brief() {
   header=$(awk '/^## /{exit} {print}' "$f")
   # The stamped libraries section is the user's shared knowledge, not the brief: it stays here.
   state=$( { sed -n '1p' "$f"; awk '/^## Questions first/{exit} /^## /{p=1; lib=($0 ~ /^## Libraries and design rules/)} p && !lib' "$f"; } | clean )
-  band=$(sed -n 's/^Usage band:[[:space:]]*\([a-z]*\).*/\1/p' handoffs/OPEN.md 2>/dev/null | head -n 1)
+  band=$(sed -n 's/^Usage band:[[:space:]]*\([a-z]*\).*/\1/p' "${NAYO_OPEN:-handoffs/OPEN.md}" 2>/dev/null | head -n 1)
 
   resp=$(ask "$(brief_payload "$state")"); rc=$?
   [ $rc = 3 ] && { printf '%s\n' "$resp"; exit 0; }
@@ -184,7 +212,7 @@ cmd_brief() {
     --arg jmodel "$(printf '%s\n' "$header" | sed -n 's/^model:[[:space:]]*//p' | head -n 1)" \
     --arg effort "$(printf '%s\n' "$header" | sed -n 's/^effort:[[:space:]]*//p' | head -n 1)" '
     def tier_of: {"fable":"top","gpt-6-astra":"top","opus":"workhorse","claude-opus-5-5":"workhorse","gpt-5.6-sol":"workhorse",
-      "sonnet":"light","gpt-5.6-terra":"light","haiku":"trivial","gpt-5.6-luna":"trivial"}[.] // null;
+      "sonnet":"light","gpt-5.6-terra":"light","haiku":"trivial","gpt-5.6-luna":"trivial"}[. // ""] // null;
     def p(k): .answers[k].noul // 0;
     . as $r
     # "opus (amber band; fable-tier task)" was a fable-tier call: compare on intent.

@@ -18,9 +18,9 @@ if [ -z "$host" ]; then
   else
     case "${1:-}" in
       # every Claude session runs these: no host means no Nayo to guard, and the
-      # statusline tap and the band are the same in both scripts
+      # statusline tap, the band and the lease (lock, resources) are the same in both scripts
       hook) exit 0 ;;
-      statusline|band) host=superset ;;
+      statusline|band|lock|resources) host=superset ;;
       # `daemon status` asks without starting one (other araniko calls auto-start it)
       *) command -v araniko >/dev/null 2>&1 \
            && araniko daemon status --json 2>/dev/null | grep -q '"pid"' && host=araniko ;;

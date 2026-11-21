@@ -13,7 +13,7 @@
 #                                      --isolate or `isolate: yes` in the header: the worker gets
 #                                      its own git worktree on branch jw/<slug>; --no-terminal
 #                                      makes the worktree without starting a worker; refuses, without
-#                                      --force, a non-isolated brief whose files: overlap a running
+#                                      --force, a non-isolated brief whose File scope overlaps a running
 #                                      non-isolated worker's; passes a fixed --request-id, so a
 #                                      retried spawn never starts a second worker)
 #                [--answers <file> [--blocked <handoff>] [--settled]]
@@ -25,11 +25,19 @@
 #                                      answer a blocked worker: typed into it while its context is
 #                                      at most 80k tokens (NAYO_FRESH_AFTER), else (--fresh, or the
 #                                      worker is gone) spawn --answers: a fresh worker on the brief
-#   nayo merge <handoff.md> --check  file list vs git status, diff stat, checks; changes nothing
+#   nayo merge <handoff.md> --check  file list vs git status, diff stat, checks, the brief's File
+#                                      scope and Acceptance command; changes nothing
+#   nayo merge <handoff.md> --check --verify [--reuse]
+#                                      also run the brief's ```bash verify``` blocks on HEAD + the
+#                                      listed changes in a throwaway worktree (nayo-verify.py);
+#                                      --reuse reports an identical recent pass instead
 #   nayo merge <handoff.md> [-m <msg>] [--outcome <o>] [--no-push] [--keep-open] [--force]
 #                [--skip-second-opinion "<reason>"]  (merge without the second opinion the
 #                                      project's policy wants; logged in the handoff)
-#                [--anyway "<reason>"] (merge despite red checks; logged in the handoff)
+#                [--anyway "<reason>"] (merge despite a failed Acceptance, a file listed
+#                                      outside the File scope, or red checks; logged in the handoff.
+#                                      An isolated merge never puts back a listed file; only
+#                                      unlisted ones outside the scope, each saved as a patch)
 #                                      commit exactly the listed files + the handoff move,
 #                                      push, close the worker, update OPEN.md; refuses red
 #                                      checks (Araniko's run on the handoff, else the brief's
@@ -52,14 +60,25 @@
 #   nayo send <session> "<text>"     type it into a worker and press Enter; the daemon checks Enter
 #                                      took and retries it; exits non-zero on "typed but not submitted"
 #   nayo send <session> --keys enter press Enter alone (after a "not submitted"; then nayo read)
+#   nayo send <session> --keys <key> [<key>…]
+#                                    press keys: enter up down left right esc tab, or several
+#                                      ("down enter"), e.g. to pick in a trust prompt
 #   nayo close <session>             close a session: prints "closed <full id>" or the daemon's error
 #                                      (any <session> may be a unique prefix of a live id, 6+ characters)
 #   nayo usage [--days N | --since DATE]
 #                                      coordinating vs building, from local transcripts
 #   nayo hook prompt                 UserPromptSubmit guard (from .claude/settings.json)
+#   nayo lessons status|propose|show|apply|reject|retire|select
+#                                    reviewed lessons from merged handoffs (nayo-lessons.py,
+#                                    handoffs/LESSONS.md); propose makes one Sonnet call, apply
+#                                    is the only writer; spawn adds the matching ones to the prompt
 #   nayo statusline                  statusline tap: saves the 5-hour reading, then runs yours
+#   nayo lock <class> [--wait <sec>] [--reuse] -- <command…>
+#                                    runs the command under a named lease (nayo.conf NAYO_LOCK_*)
+#   nayo resources [--json]          who holds each lease, and who is waiting
 #
-# Settings live in handoffs/nayo.conf. Works on the stock macOS bash (3.2).
+# Settings live in handoffs/nayo.conf; one developer's own team-mode settings in the untracked
+# handoffs/nayo.local.conf (NAYO.md, "Shared repos (team mode)"). Works on the stock macOS bash (3.2).
 # jq is needed for spawn, the hooks and the band; everything fails open without it.
 # Sessions are driven through the `araniko` CLI. Ported from jarvis 0.3.1 (MIT, Gorock);
 # PORTING.md in the Araniko repo's kits/nayo/ lists what changed and what the CLI still lacks.
@@ -101,6 +120,37 @@ elif [ -f "$H/jarvis.conf" ]; then
     eval "NAYO_$v=\"\$JARVIS_$v\""
   done
 fi
+# Team mode: a repo two developers share, each with their own Nayo (NAYO.md, "Shared repos").
+# One developer's own settings live in the untracked handoffs/nayo.local.conf, read after
+# nayo.conf: NAYO_OWNER (their name: their OPEN file, and what nayo writes under handoffs/),
+# NAYO_ROLE (lead, the default, or contributor) and NAYO_OPEN (their OPEN file, by default
+# handoffs/OPEN.<owner>.md). Without that file nothing changes. An older
+# handoffs/jarvis.local.conf (JARVIS_OWNER, JARVIS_ROLE, JARVIS_OPEN) counts when there's no
+# nayo.local.conf. TODO(remove after first public release)
+# The role a local conf gives is the team role, kept in TEAM_ROLE; a NAYO_ROLE or JARVIS_ROLE
+# from the environment (JARVIS_ROLE=worker on an older worker) stays as it was.
+TEAM_CONF=""; TEAM_ROLE=""
+for TEAM_F in "$H/nayo.local.conf" "$H/jarvis.local.conf"; do
+  [ -f "$TEAM_F" ] && { TEAM_CONF=$TEAM_F; break; }
+done
+if [ -n "$TEAM_CONF" ]; then
+  TEAM_EN=${NAYO_ROLE+x}; TEAM_ENV=${NAYO_ROLE:-}; TEAM_EJ=${JARVIS_ROLE+x}; TEAM_EJV=${JARVIS_ROLE:-}
+  unset NAYO_ROLE JARVIS_ROLE
+  # shellcheck disable=SC1090
+  . "$TEAM_CONF"
+  NAYO_OWNER=${NAYO_OWNER:-${JARVIS_OWNER:-}}; NAYO_OPEN=${NAYO_OPEN:-${JARVIS_OPEN:-}}
+  TEAM_ROLE=${NAYO_ROLE:-${JARVIS_ROLE:-lead}}
+  unset NAYO_ROLE JARVIS_ROLE
+  [ -n "$TEAM_EN" ] && export NAYO_ROLE="$TEAM_ENV"
+  [ -n "$TEAM_EJ" ] && export JARVIS_ROLE="$TEAM_EJV"
+fi
+case "${NAYO_OWNER:-}" in
+  *[!A-Za-z0-9._-]*|.*) echo "nayo: NAYO_OWNER=$NAYO_OWNER: use letters, digits, . _ or - (it names handoffs/OPEN.<owner>.md)" >&2; exit 1 ;;
+esac
+if [ -n "${NAYO_OPEN:-}" ]; then OPEN=$NAYO_OPEN
+elif [ -n "${NAYO_OWNER:-}" ]; then OPEN="$H/OPEN.$NAYO_OWNER.md"
+fi
+export NAYO_OPEN="$OPEN"   # jev.sh reads the usage band from it
 # Araniko injects these into every session it starts (docs/architecture.md §4.3).
 ME="${ARANIKO_SESSION_ID:-}"
 # Set in a worktree: this is a branch Nayo, and its workers run here too.
@@ -235,7 +285,167 @@ field() { # $1 = key, $2 = file: "key: value" from a brief header or handoff
   sed -n "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1
 }
 
+# For spawn: one line when a Claude brief names a model other than the user's Workers default
+# (Settings → Nayo → Workers model) without a reason in brackets. Never refuses. $1 = the
+# brief's whole model: value, $2 = the default. Aliases match their full ids (opus = claude-opus-5-5).
+model_tier_name() { printf '%s' "$1" | sed -E 's/^claude-//; s/-[0-9][0-9.-]*$//'; }
+model_default_note() {
+  local raw="$1" def="$2" m
+  [ -n "$def" ] || return 0
+  m=$(printf '%s' "$raw" | awk '{print $1}')
+  case "$m" in \<*|""|default) return 0 ;; esac
+  case "$raw" in *"("*")"*) return 0 ;; esac
+  [ "$(model_tier_name "$m")" = "$(model_tier_name "$def")" ] && return 0
+  echo "model: the brief names $m but your Workers default is $def, with no reason in brackets — spawning $m anyway (leave model: out to take the default, or write model: $m (<why>))"
+}
+
 # ---------------------------------------------------------------- band
+
+# ---------------------------------------------------------------- team mode
+# Loaded above from handoffs/nayo.local.conf; NAYO.md, "Shared repos (team mode)".
+
+# An owner's OPEN file, the first time: handoffs/OPEN.md's text without its items (those
+# stay with whoever wrote them).
+open_seed() {
+  [ -f "$OPEN" ] || [ "$OPEN" = "$H/OPEN.md" ] || [ ! -f "$H/OPEN.md" ] || {
+    awk '/^- /{next} /^(Nayo|Jarvis) session:/{print "Nayo session: <nayo start writes it>"; next} {print}' "$H/OPEN.md" > "$OPEN" \
+      && echo "made $OPEN from $H/OPEN.md (without its items, which stay there)"
+  }
+}
+
+# File name $1 with the owner after its date (YYYY-MM-DD-HHMM-<owner>-<slug>.md), so two
+# developers' handoffs and briefs never collide; unchanged without an owner or when it has it.
+owner_name() {
+  [ -n "${NAYO_OWNER:-}" ] || { printf '%s' "$1"; return; }
+  case "$1" in *-"$NAYO_OWNER"-*|"$NAYO_OWNER"-*) printf '%s' "$1"; return ;; esac
+  if printf '%s' "$1" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-'; then
+    printf '%s' "$1" | sed -E "s/^([0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4})-/\\1-$NAYO_OWNER-/"
+  else
+    printf '%s-%s' "$NAYO_OWNER" "$1"
+  fi
+}
+
+# For spawn: warn when brief $1's name lacks the owner; the worker prompt's naming line.
+owner_brief_warn() {
+  [ -n "${NAYO_OWNER:-}" ] || return 0
+  [ "$(owner_name "$(basename "$1")")" = "$(basename "$1")" ] \
+    || echo "warning: $1 doesn't name its owner: call it $(dirname "$1")/$(owner_name "$(basename "$1")") so a teammate's brief can't collide with it"
+}
+owner_prompt() {
+  [ -n "${NAYO_OWNER:-}" ] || return 0
+  printf ' Name your handoff YYYY-MM-DD-HHMM-%s-<slug>.md: two developers share this repo, and the owner keeps your handoff apart from theirs.' "$NAYO_OWNER"
+}
+
+default_branch() { # origin/HEAD's target, else main, else master
+  local b
+  b=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) && [ -n "$b" ] && { printf '%s' "${b#origin/}"; return; }
+  for b in main master; do
+    { git show-ref -q --verify "refs/heads/$b" || git show-ref -q --verify "refs/remotes/origin/$b"; } && { printf '%s' "$b"; return; }
+  done
+  printf main
+}
+
+# start/status, in team mode: role · branch · open file
+team_line() {
+  local cur b
+  [ -n "$TEAM_CONF" ] || return 0
+  cur=$(git symbolic-ref -q --short HEAD 2>/dev/null || echo detached)
+  printf 'team: %s · %s · %s\n' "$TEAM_ROLE" "$cur" "$OPEN"
+  case "$TEAM_ROLE" in
+    lead) ;;
+    contributor)
+      b=$(default_branch)
+      [ "$cur" != "$b" ] && [ "$cur" != detached ] \
+        || echo "  ! a contributor never commits on $b: start a branch first, git switch -c ${NAYO_OWNER:-<name>}/<topic> origin/$b" ;;
+    *) echo "  ! NAYO_ROLE=$TEAM_ROLE in $TEAM_CONF: give lead or contributor" ;;
+  esac
+}
+
+# A lead takes what teammates pushed: fetch, then fast-forward, or rebase the commits
+# origin doesn't have yet (a push that failed earlier) onto it. The rebase runs in a scratch
+# worktree, so this checkout's uncommitted work is never stashed, and lands with
+# `reset --keep`, which refuses rather than touch a file with uncommitted changes. Never a
+# force push, a stash or a merge commit. Sets CATCH_DONE (what it did, empty when there was
+# nothing to take); returns 1 with CATCH_WHY when it can't, and then nothing has moved.
+catch_up() {
+  local up upsha behind ahead overlap tmp new conflicts
+  CATCH_DONE=""; CATCH_WHY=""
+  up=$(git rev-parse -q --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) && [ -n "$up" ] || return 0
+  git fetch -q 2>/dev/null || { CATCH_DONE="git fetch failed, so not caught up with $up"; return 0; }
+  upsha=$(git rev-parse -q --verify '@{u}' 2>/dev/null) || return 0
+  behind=$(git rev-list --count "HEAD..$upsha" 2>/dev/null) || return 0
+  [ "${behind:-0}" -gt 0 ] || return 0
+  ahead=$(git rev-list --count "$upsha..HEAD" 2>/dev/null)
+  overlap=$(git diff --name-only HEAD "$upsha" 2>/dev/null | grep -xF -f <(changed_paths) 2>/dev/null | head -n 8 | tr '\n' ' ')
+  if [ "${ahead:-0}" = 0 ]; then
+    if git merge -q --ff-only "$upsha" >/dev/null 2>&1; then
+      CATCH_DONE="caught up: fast-forwarded $behind commit(s) from $up"; return 0
+    fi
+    CATCH_WHY="can't catch up with $up: its $behind new commit(s) change ${overlap:-files} with uncommitted changes here. Nothing merged and the branch is as it was; take $up in by hand (commit or move those changes, then git merge --ff-only @{u}) and merge again"
+    return 1
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/nayo-catch-up.XXXXXX") || { CATCH_WHY="no scratch folder to rebase in"; return 1; }
+  if ! git worktree add -q --detach "$tmp" HEAD >/dev/null 2>&1; then
+    rm -rf "$tmp"; CATCH_WHY="couldn't make a scratch worktree to rebase $ahead local commit(s) onto $up"; return 1
+  fi
+  if git -C "$tmp" rebase -q --rebase-merges "$upsha" >/dev/null 2>&1; then
+    new=$(git -C "$tmp" rev-parse HEAD)
+  else
+    conflicts=$(git -C "$tmp" diff --name-only --diff-filter=U 2>/dev/null | head -n 8 | tr '\n' ' ')
+    git -C "$tmp" rebase --abort >/dev/null 2>&1
+  fi
+  git worktree remove --force "$tmp" >/dev/null 2>&1; rm -rf "$tmp"; git worktree prune 2>/dev/null
+  if [ -z "${new:-}" ]; then
+    CATCH_WHY="can't catch up with $up: rebasing this branch's $ahead unpushed commit(s) onto its $behind new one(s) conflicts${conflicts:+ in $conflicts}. Nothing merged and the branch is as it was; rebase by hand (git pull --rebase once the checkout is clean), never force-push"
+    return 1
+  fi
+  if ! git reset -q --keep "$new" >/dev/null 2>&1; then
+    CATCH_WHY="can't catch up with $up: its $behind new commit(s) change ${overlap:-files} with uncommitted changes here. Nothing merged and the branch is as it was; commit or move those changes, then git pull --rebase, and merge again"
+    return 1
+  fi
+  CATCH_DONE="caught up: rebased $ahead unpushed commit(s) onto $behind new one(s) from $up"
+}
+
+# Before a merge commit, in team mode ($1 = 1 when the merge will push): a lead catches up
+# with origin first; a contributor must be on its own branch, never the default one.
+team_guard() {
+  local b cur
+  [ -n "$TEAM_CONF" ] || return 0
+  case "$TEAM_ROLE" in
+    lead)
+      [ "$1" = 1 ] && [ -n "$(git remote)" ] || return 0
+      catch_up || die "$CATCH_WHY"
+      [ -z "$CATCH_DONE" ] || echo "  $CATCH_DONE" ;;
+    contributor)
+      b=$(default_branch); cur=$(git symbolic-ref -q --short HEAD 2>/dev/null)
+      [ -n "$cur" ] || die "contributor Nayo: HEAD is detached. Start a branch first: git switch -c ${NAYO_OWNER:-<name>}/<topic> origin/$b"
+      [ "$cur" != "$b" ] || die "contributor Nayo: never commit on $b. Start a branch first: git switch -c ${NAYO_OWNER:-<name>}/<topic> origin/$b" ;;
+    *) die "NAYO_ROLE=$TEAM_ROLE in $TEAM_CONF: give lead or contributor" ;;
+  esac
+}
+
+# The push after a merge commit, in team mode; prints the summary line's push part. A
+# contributor pushes its branch (-u origin HEAD) for a PR. A lead pushes, and when origin
+# rejects it, catches up once and pushes again.
+team_push() {
+  local cur
+  cur=$(git symbolic-ref -q --short HEAD 2>/dev/null)
+  [ -n "$(git remote)" ] || { echo "not pushed (no remote)"; return; }
+  if [ "$TEAM_ROLE" = contributor ]; then
+    if git push -q -u origin HEAD 2>/dev/null; then echo "pushed $cur (open its PR: gh pr create --base $(default_branch))"
+    else echo "push failed, so $cur stays local until the next push (git push -u origin HEAD)"; fi
+    return
+  fi
+  set -- -q
+  git rev-parse -q --abbrev-ref '@{upstream}' >/dev/null 2>&1 || set -- -q -u origin "$cur"
+  if git push "$@" 2>/dev/null; then echo pushed; return; fi
+  if catch_up; then
+    if [ -n "$CATCH_DONE" ] && git push "$@" 2>/dev/null; then echo "push rejected, so $CATCH_DONE, then pushed"
+    else echo "push failed${CATCH_DONE:+ ($CATCH_DONE)}, so the commit stays local until the next push"; fi
+  else
+    echo "push rejected and the catch-up failed, so the commit stays local: $CATCH_WHY"
+  fi
+}
 
 # Prints "<band>\t<one-line explanation>". The reading comes from `nayo statusline`,
 # which Claude Code feeds its own 5-hour and 7-day rate-limit numbers.
@@ -310,6 +520,7 @@ EOF
 
 cmd_start() {
   local old live oldwt
+  open_seed
   [ -f "$OPEN" ] || die "no $OPEN — run araniko-nayo:setup first"
   [ -n "$ME" ] || die "ARANIKO_SESSION_ID not set — run Nayo in an Araniko session (araniko agent spawn --role nayo …)"
   need_araniko
@@ -351,10 +562,12 @@ cmd_start() {
 
 cmd_status() {
   local b line id brief ho ids="" n=0 changed claimed unclaimed live="[]" st merged
+  open_seed
   [ -f "$OPEN" ] || die "no $OPEN — run araniko-nayo:setup first"
 
   b=$(band)
   printf 'band: %s\n' "$(printf '%s' "$b" | tr '\t' ' ' | sed 's/ /: /')"
+  team_line
   case "$(printf '%s' "$b" | cut -f1)" in
     green|amber|red) open_set "Usage band" "$(printf '%s' "$b" | cut -f1) ($(printf '%s' "$b" | cut -f2 | cut -d, -f1), $(date +%H:%M))" ;;
   esac
@@ -422,7 +635,7 @@ EOF
     "$changed" "$unclaimed" "$(git log -1 --format='last commit %h %ar' 2>/dev/null)"
   n=$(awk '/^## /{on = ($0 ~ /^## To-do/); next} on && /^- /' "$OPEN" | wc -l | tr -d ' ')
   q=$(awk '/^## /{on = ($0 ~ /^## Questions for the user/); next} on && /^- /' "$OPEN" | wc -l | tr -d ' ')
-  printf 'OPEN.md: %s question(s) for the user · %s to-do\n' "$q" "$n"
+  printf "%s: %s question(s) for the user · %s to-do\n" "$(basename "$OPEN")" "$q" "$n"
   finished_todos
   unbriefed_tasks
 }
@@ -550,16 +763,55 @@ brief_term() {
   printf '%s' "$t"
 }
 
+# The escape codes for key names $@ (each may hold several, space-separated): enter up down
+# left right esc tab. Dies on an unknown key.
+keys_codes() {
+  local k out=""
+  for k in $*; do
+    case "$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')" in
+      enter|return) out="$out"$'\r' ;;
+      up) out="$out"$'\e[A' ;;
+      down) out="$out"$'\e[B' ;;
+      right) out="$out"$'\e[C' ;;
+      left) out="$out"$'\e[D' ;;
+      esc|escape) out="$out"$'\e' ;;
+      tab) out="$out"$'\t' ;;
+      *) die "--keys: unknown key \"$k\" (keys: enter up down left right esc tab)" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Press keys $2… in session $1. `enter` alone keeps the daemon's checked Enter (term_send with
+# no text); anything else goes as raw escape codes with `araniko term send --no-submit`.
+keys_send() {
+  local id="$1" codes out rc full; shift
+  codes=$(keys_codes "$@") || exit 1
+  need_araniko
+  if [ "$codes" = $'\r' ]; then
+    term_send "$id" ""; rc=$?
+    case $rc in
+      0) echo "pressed Enter in $SENT_ID" ;;
+      2) die "$SEND_ERR — run: nayo send $id --keys enter, then nayo read $id" ;;
+      *) die "couldn't send to $id: $SEND_ERR" ;;
+    esac
+    return
+  fi
+  out=$(araniko term send "$id" --no-submit --text "$codes" --json 2>&1) || die "couldn't send keys to $id: $(one_line "$out")"
+  full=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
+  echo "pressed $* in ${full:-$id}"
+}
+
 cmd_send() {
   local id="${1:-}" text rc
-  [ -n "$id" ] && [ $# -ge 2 ] || die 'usage: nayo send <session> "<text>" | nayo send <session> --keys enter'
-  need_araniko
+  [ -n "$id" ] && [ $# -ge 2 ] || die 'usage: nayo send <session> "<text>" | nayo send <session> --keys <key> [<key>…]  (keys: enter up down left right esc tab)'
   if [ "$2" = --keys ]; then
-    [ "${3:-}" = enter ] || die "--keys takes one key: enter"
-    text=""
-  else
-    text="$2"
+    shift 2
+    [ $# -gt 0 ] || die "--keys needs a key: enter up down left right esc tab (several: --keys \"down enter\")"
+    keys_send "$id" "$@"; return
   fi
+  need_araniko
+  text="$2"
   term_send "$id" "$text"; rc=$?
   case $rc in
     0) if [ -z "$text" ]; then echo "pressed Enter in $SENT_ID"; else echo "sent to $SENT_ID (submitted)"; fi ;;
@@ -581,7 +833,9 @@ knowledge_fetch() { # $1 = the araniko CLI, $2 = the project id (empty: look it 
     proj=$(printf '%s' "$out" | jq -r '.id // empty' 2>/dev/null)
     [ -n "$proj" ] || { echo "(knowledge unavailable: no project id from araniko project get)"; return 0; }
   fi
-  out=$("$u" knowledge show --project "$proj" --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
+  # --for worker leaves out files marked audience: nayo; an older araniko without the flag fails it.
+  out=$("$u" knowledge show --project "$proj" --for worker --json 2>/dev/null) ||
+    out=$("$u" knowledge show --project "$proj" --json 2>&1) || { echo "(knowledge unavailable: $(one_line "$out"))"; return 0; }
   out=$(printf '%s' "$out" | jq -r '.text // empty' 2>/dev/null) || { echo "(knowledge unavailable: unreadable output from araniko knowledge show)"; return 0; }
   [ -n "$out" ] || out="(no shared knowledge applies to this project)"
   printf '%s\n' "$out"
@@ -844,13 +1098,7 @@ takes_request_id() { araniko --help 2>/dev/null | grep -q -- '--request-id'; }
 # where it's used: the id has no spaces.
 rid_flag() { takes_request_id && printf -- '--request-id=%s' "$(request_id "$@")"; }
 
-# The paths or globs brief $1's files: line names, one per line (commas or spaces between).
-# The template's <placeholder> names none.
-brief_files() {
-  local v; v=$(field files "$1")
-  case "$v" in ""|\<*) return 0 ;; esac
-  printf '%s\n' "$v" | tr ',' ' ' | tr -s ' \t' '\n\n' | sed -e 's/`//g' -e 's#^\./##' -e 's#/$##' | grep -v '^$'
-}
+# brief_files (the globs a brief may touch) is with the merge checks below.
 
 # Whether path-or-glob $1 and $2 can name the same file: equal, one a folder holding the
 # other, one a glob matching the other, or (both globs) one's fixed start inside the other's.
@@ -872,8 +1120,8 @@ paths_overlap() {
 }
 
 # For a non-isolated brief $1: one "<running brief>: <its path> ↔ <ours>" line per overlap
-# with the files: of a non-isolated worker under Running workers in OPEN.md (spawned and not
-# yet merged, so its edits are still loose in this checkout). Briefs without files: are skipped.
+# with the File scope of a non-isolated worker under Running workers in OPEN.md (spawned and not
+# yet merged, so its edits are still loose in this checkout). Briefs without one are skipped.
 files_overlaps() {
   local mine theirs other a b
   mine=$(brief_files "$1")
@@ -977,7 +1225,7 @@ cmd_answer() {
 
 cmd_spawn() {
   local brief="" after="" follow="" why="" force=0 worker model effort prompt out id cap_now account wmax wnow
-  local iso=0 dry=0 line isotag="" rid answers="" blocked="" settled=0 oldterm="" ask
+  local iso=0 dry=0 defmodel="" line isotag="" rid answers="" blocked="" settled=0 oldterm="" ask
   ask="Put every question in one first handoff (status: blocked); once answered, finish this brief and hand off."
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1024,9 +1272,12 @@ cmd_spawn() {
   model=$(field model "$brief" | awk '{print $1}')
   effort=$(field effort "$brief" | awk '{print $1}')
   case "$worker" in claude|codex|opencode|grok) ;; *) die "brief header needs worker: claude | codex | opencode | grok" ;; esac
-  # a Claude brief with no model or effort of its own takes the user's defaults
+  # a Claude brief with no model or effort of its own takes the user's defaults; one that
+  # names another model says why in brackets, model: claude-opus-5-5 (cross-crate design)
   if [ "$worker" = claude ]; then
-    case "$model" in \<*|""|default) model=$(worker_default model) ;; esac
+    defmodel=$(worker_default model)
+    model_default_note "$(field model "$brief")" "$defmodel"
+    case "$model" in \<*|""|default) model=$defmodel ;; esac
     case "$effort" in \<*|""|default) effort=$(worker_default effort) ;; esac
   fi
   case "$model" in \<*|"") [ "$worker" = opencode ] || [ "$worker" = grok ] || die "brief header needs a model (or set a default: araniko settings set workers.model <model>)" ;; esac
@@ -1040,6 +1291,8 @@ cmd_spawn() {
   # Tasks: line (or an older Asks:) — refuses a malformed, unknown, skipped or removed
   # id, warns when it's missing.
   check_asks "$brief" "$force"
+  owner_brief_warn "$brief"
+  open_seed
 
   # Before the lint, which fails a UI brief without the section.
   stamp_knowledge "$brief" "${ARANIKO_PROJECT_ID:-}"
@@ -1062,21 +1315,21 @@ cmd_spawn() {
   wmax=$(workers_max); wnow=""
   [ -n "$wmax" ] && wnow=$(live_workers)
   if [ -n "$wmax" ] && [ -n "$wnow" ] && [ $force = 0 ] && [ "$wnow" -ge "$wmax" ]; then
-    die "worker cap reached ($wnow of $wmax live workers, set in Araniko's Settings). Queue it under To-do in OPEN.md, wait for a worker to finish, or --force"
+    die "worker cap reached ($wnow of $wmax live workers, set in Araniko's Settings). Queue it under To-do in $OPEN, wait for a worker to finish, or --force"
   fi
   if [ "$worker" = claude ] && [ $force = 0 ] && [ -z "$account" ]; then
     if [ -z "$wmax" ] || [ -z "$wnow" ]; then
       cap_now=$(claude_sessions)
       if [ "$cap_now" -ge "$NAYO_MAX_CLAUDE" ]; then
-        die "Claude cap reached ($cap_now of $NAYO_MAX_CLAUDE, Nayo included). Queue it under To-do in OPEN.md, route it to OpenCode/Codex, or --force"
+        die "Claude cap reached ($cap_now of $NAYO_MAX_CLAUDE, Nayo included). Queue it under To-do in $OPEN, route it to OpenCode/Codex, or --force"
       fi
     fi
   fi
 
-  prompt="You are a Nayo worker. Read AGENTS.md, then do the task in $brief."
-  [ -n "$after" ] && prompt="$prompt $after records what is already done — start from there."
-  [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists. Never run git commands that change state."
-  prompt="$prompt $ask"
+  # The brief and the worker rules go inline (worker_prompt), so the worker doesn't open them.
+  prompt="$(worker_prompt "$brief" "$after" "$brief" "$after" "$worker")"$'\n\n'
+  [ "$worker" = opencode ] && prompt="${prompt}Touch only the files it lists. Never run git commands that change state. "
+  prompt="$prompt$ask"
 
   # An isolated worker runs in its own git worktree (a plain `git worktree add` on jw/<slug>,
   # not a daemon worktree: Araniko skips jw/* ones, so it stays invisible), started there with
@@ -1085,12 +1338,14 @@ cmd_spawn() {
     iso_prepare "$brief"
     iso_cargo "$ISO_WT"
     iso_header "$brief" "$ISO_WT" "$ISO_BR" || echo "nayo: couldn't record isolate: in $brief (no started: line?)" >&2
-    prompt="$(iso_prompt "$brief" "$after")"
+    prompt="$(iso_prompt "$brief" "$after" "$worker")"
     [ "$worker" = opencode ] && prompt="$prompt Touch only the files it lists."
     [ -n "$answers" ] && ask=${ask/ $blocked./ $(iso_abs "$blocked").}
     prompt="$prompt $ask"
     isotag=" · isolate: $ISO_WT · branch: $ISO_BR"
   fi
+  prompt="$prompt$(owner_prompt)"
+  prompt="$prompt$(lessons_block "$brief")"
 
   # The project comes from $ARANIKO_PROJECT_ID inside the CLI; the cwd is this checkout
   # (a branch Nayo's worktree, named too so the worker lands in it for sure).
@@ -1126,6 +1381,193 @@ cmd_spawn() {
   open_add_running "$line"
   [ -n "$oldterm" ] && echo "answered as a fresh worker: ${ANS_CLOSED:-$oldterm left open}, the answers and $blocked are in the brief"
   echo "spawned $id${ASKS:+ · $ASKS ·} $worker/${model:-default}${effort:+ $effort} ← $brief${isotag:+ · isolated on $ISO_BR} ($(cap_line))"
+}
+
+# ---------------------------------------------------------------- brief scope and acceptance
+# A brief's ## File scope (globs) and ## Acceptance (one command), checked before a merge.
+# A brief without both is an older one: merge skips these checks with one line.
+
+# The body of brief $2's "## $1" section, up to the next heading; one-line HTML comments dropped.
+brief_section() {
+  awk -v want="## $1" '/^## /{sub(/[[:space:]]+$/, ""); on = ($0 == want); next} on' "$2" 2>/dev/null \
+    | grep -v '^[[:space:]]*<!--.*-->[[:space:]]*$'
+}
+
+# The globs brief $1 may touch, one per line: its ## File scope section (bullets or commas;
+# a ` — note` after a glob is dropped), else the older files: header line. A <placeholder> names none.
+brief_files() {
+  local v
+  v=$(brief_section 'File scope' "$1" | sed -E -e 's/^[[:space:]]*[-*][[:space:]]+//' \
+        -e 's/[[:space:]]+(—|–|--|-|\().*$//' | grep -v '^[[:space:]]*<')
+  if [ -z "$v" ]; then
+    v=$(field files "$1")
+    case "$v" in ""|\<*) return 0 ;; esac
+  fi
+  printf '%s\n' "$v" | tr ',' ' ' | tr -s ' \t' '\n\n' | sed -e 's/`//g' -e 's#^\./##' -e 's#/$##' | grep -v '^$'
+}
+
+# Brief $1's File scope as one anchored extended regex: `**` spans folders, `*` and `?` stay
+# within one, and a plain path also covers everything under it.
+scope_regex() {
+  brief_files "$1" | awk '
+    { g = $0; plain = (g !~ /[*?[]/)
+      gsub(/[.+(){}|^$\\]/, "\\\\&", g)
+      gsub(/\*\*\//, "\001", g); gsub(/\*\*/, "\002", g)
+      gsub(/\*/, "[^/]*", g); gsub(/\?/, "[^/]", g)
+      gsub(/\001/, "(.*/)?", g); gsub(/\002/, ".*", g)
+      r = r (r == "" ? "" : "|") g (plain ? "(/.*)?" : "") }
+    END { if (r != "") print "^(" r ")$" }'
+}
+
+# The paths on stdin outside brief $1's File scope; the brief and the worker's handoff ($2)
+# are always in it.
+outside_scope() {
+  local re
+  re=$(scope_regex "$1")
+  [ -n "$re" ] || { cat > /dev/null; return 0; }
+  grep -Ev "$re" | grep -vxF -e "$1" -e "${2:-$1}" | grep -v '^$'
+}
+
+# Brief $1's Acceptance command: the first line of its ## Acceptance section (the command
+# inside a leading pair of backticks), or the lines of a ``` block there. A <placeholder> is none.
+brief_acceptance() {
+  brief_section Acceptance "$1" | awk '
+    /^[[:space:]]*```/ { if (fence) exit; fence = 1; next }
+    fence { print; next }
+    NF { print; exit }' | sed -E '1s/^[[:space:]]*`([^`]*)`.*$/\1/' | awk 'NR == 1 && /^[[:space:]]*</ {exit} {print}'
+}
+
+# Whether brief $1 has both: a File scope and an Acceptance command.
+brief_checked() {
+  [ -n "$1" ] && [ -f "$1" ] && [ -n "$(brief_files "$1")" ] && [ -n "$(brief_acceptance "$1")" ]
+}
+
+kill_tree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done; kill -TERM "$1" 2>/dev/null; }
+
+# Runs command $2 with bash -c in folder $1, its output in file $3, for at most
+# NAYO_ACCEPTANCE_TIMEOUT seconds (900). Returns its exit code, 124 when it timed out and 130
+# when Ctrl-C cancelled it; either way it and everything it started are stopped.
+run_acceptance() {
+  local pid dog mark="$3.timeout" rc=0 cancelled=0
+  rm -f "$mark"
+  ( cd "$1" && exec bash -c "$2" ) > "$3" 2>&1 < /dev/null &
+  pid=$!
+  ( sleep "${NAYO_ACCEPTANCE_TIMEOUT:-900}"; : > "$mark"; kill_tree "$pid" ) > /dev/null 2>&1 &
+  dog=$!
+  # background jobs ignore Ctrl-C here, so the trap stops the command
+  trap 'cancelled=1; kill_tree "$pid"' INT TERM
+  while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done
+  trap - INT TERM
+  kill_tree "$dog"; wait "$dog" 2>/dev/null
+  [ $cancelled = 1 ] && { rm -f "$mark"; return 130; }
+  [ -f "$mark" ] && { rm -f "$mark"; return 124; }
+  return $rc
+}
+
+# Replaces handoff $1's "## $2" section with $3 (a section only written when $4 = new), at the end.
+handoff_section() {
+  local tmp
+  [ -f "$1" ] || return 0
+  grep -qxF "## $2" "$1" || [ "${4:-}" = new ] || return 0
+  tmp=$(mktemp "$1.XXXXXX") || return 0
+  { awk -v h="## $2" '/^## /{skip = ($0 == h)} !skip' "$1" \
+      | awk 'NF {while (b > 0) {print ""; b--} print; next} {b++}'
+    printf '\n## %s\n%s\n' "$2" "$3"; } > "$tmp" && mv "$tmp" "$1" || rm -f "$tmp"
+}
+
+# merge_checks' part for a brief with File scope and Acceptance (brief $1, handoff $2,
+# worktree $3, empty for this checkout). In this checkout, a handoff that lists files outside
+# the scope is red (an isolated branch's are put back by merge_isolated instead). Then the
+# Acceptance command runs there; a fail or timeout is red and (not with --check) goes into
+# the handoff with its last 20 lines. Sets red and red_why (cmd_merge's locals); Ctrl-C exits 130.
+scope_acceptance_checks() {
+  local cmd out log rc t0 secs why="" limit="${NAYO_ACCEPTANCE_TIMEOUT:-900}"
+  if ! brief_checked "$1"; then
+    echo "  checks: brief has no Acceptance/File scope (older brief), skipped"
+    return 0
+  fi
+  if [ -z "${3:-}" ]; then
+    out=$(printf '%s\n' $files | outside_scope "$1" "$2")
+    if [ -n "$out" ]; then
+      echo "  ✗ scope: the handoff lists files outside the brief's File scope:"
+      printf '%s\n' "$out" | sed 's/^/    /'
+      red=1; red_why="${red_why:+$red_why; }the handoff lists files outside the brief's File scope ($(printf '%s ' $out | sed 's/ $//'))"
+    else
+      echo "  scope: every listed file is inside the File scope"
+    fi
+  fi
+  cmd=$(brief_acceptance "$1")
+  if [ "${status:-}" = blocked ]; then echo "  acceptance: not run (status: blocked)"; return 0; fi
+  if [ $red = 1 ] && [ -z "${anyway:-}" ]; then echo "  acceptance: not run (already red)"; return 0; fi
+  log=$(mktemp "${TMPDIR:-/tmp}/nayo-acceptance.XXXXXX") || die "mktemp failed"
+  echo "  acceptance: running \`$cmd\` in ${3:-this checkout} (timeout ${limit}s; Ctrl-C cancels)"
+  t0=$(now)
+  run_acceptance "${3:-$ROOT}" "$cmd" "$log"; rc=$?
+  secs=$(( $(now) - t0 ))
+  case $rc in
+    0) ;;
+    130) rm -f "$log"; echo "nayo: acceptance cancelled (Ctrl-C), not merged" >&2; exit 130 ;;
+    124) why="timed out after ${limit}s" ;;
+    *) why="failed (exit $rc)" ;;
+  esac
+  if [ -z "$why" ]; then
+    echo "  acceptance: passed (${secs}s)"
+    [ "${check:-0}" = 1 ] ||
+      handoff_section "$2" "Acceptance (run by nayo merge)" "Passed · ${secs}s · $(date '+%Y-%m-%d %H:%M') · \`$cmd\`"
+  else
+    echo "  ✗ acceptance: $why · \`$cmd\` · last lines:"
+    tail -n 20 "$log" | sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/^/    /'
+    [ "${check:-0}" = 1 ] ||
+      handoff_section "$2" "Acceptance (run by nayo merge)" "$(printf 'Failed: %s · %ss · %s · `%s` (in %s)\n\n```\n%s\n```' \
+      "$why" "$secs" "$(date '+%Y-%m-%d %H:%M')" "$cmd" "${3:-the shared checkout}" \
+      "$(tail -n 20 "$log" | sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g')")" new
+    red=1; red_why="${red_why:+$red_why; }the Acceptance command $why"
+  fi
+  rm -f "$log"
+}
+
+# The paths isolated worktree $3 changed since $4 (committed, uncommitted, untracked;
+# deletions and both sides of renames) outside brief $1's File scope; handoff $2 exempt.
+iso_outside() {
+  { git -C "$3" diff --name-only --no-renames "$4" -- 2>/dev/null
+    git -C "$3" ls-files --others --exclude-standard 2>/dev/null; } | sort -u | outside_scope "$1" "$2"
+}
+
+# iso_outside's paths that handoff $2 doesn't list: the ones the put-back may touch. A listed
+# file is the worker's declared work, so it is never put back (merge_isolated makes it red).
+iso_unlisted() {
+  iso_outside "$1" "$2" "$3" "$4" | grep -vxF -e "$(listed_files "$2")"
+}
+
+# Before an isolated merge (brief $1, handoff $2, worktree $3, branch point $4, branch $5):
+# every change outside the File scope that the handoff doesn't list goes back to the branch
+# point, committed on the branch. The changes are saved first as a patch in
+# handoffs/.nayo/putback/, and the put-back paths are listed in the handoff. Prints one line
+# per path put back: "<path><TAB><patch>".
+iso_put_back() {
+  local out f undo patch
+  out=$(iso_unlisted "$1" "$2" "$3" "$4")
+  [ -n "$out" ] || return 0
+  for f in $out; do git -C "$3" add -A -- "$f" >/dev/null 2>&1; done
+  mkdir -p "$H/.nayo/putback"
+  patch="$H/.nayo/putback/$(basename "$2" .md)-$(date +%Y%m%d-%H%M%S).patch"
+  git -C "$3" diff --cached --binary "$4" -- $out > "$patch" 2>/dev/null
+  for f in $out; do
+    if git -C "$3" cat-file -e "$4:$f" 2>/dev/null; then
+      git -C "$3" checkout -q "$4" -- "$f" || die "couldn't put back $f in $3"
+    else
+      git -C "$3" rm -q -f --ignore-unmatch -- "$f" >/dev/null || die "couldn't put back $f in $3"
+      rm -f "$3/$f"
+    fi
+  done
+  undo=$(git -C "$3" diff --cached --name-only -- $out)
+  if [ -n "$undo" ]; then
+    git -C "$3" commit -q -m "Put back changes outside the brief's File scope" \
+      -m "$(printf '%s\n' $out)" -- $undo || die "committing the put-back on $5 failed"
+  fi
+  [ -z "$(iso_unlisted "$1" "$2" "$3" "$4")" ] || die "files outside the File scope are still changed in $3 after the put-back"
+  handoff_section "$2" "Scope (put back by nayo merge)" "$(printf 'Outside the File scope and not listed, put back on %s (the changes are saved in %s):\n' "$5" "$patch"; printf -- '- %s\n' $out)" new
+  for f in $out; do printf '%s\t%s\n' "$f" "$patch"; done
 }
 
 # ---------------------------------------------------------------- merge
@@ -1208,7 +1650,8 @@ checks_anyway_log() {
 
 # Print the checks line for merge (brief $1, handoff $2); sets red=1 and red_why
 # (cmd_merge's locals) when they're red. Araniko's run on the handoff decides when there
-# is one; else the brief's last `araniko check` run.
+# is one; else the brief's last `araniko check` run. Then the File scope and Acceptance
+# checks (scope_acceptance_checks; $3 = an isolated worker's worktree).
 merge_checks() {
   local checks
   if checks_none "$1"; then
@@ -1221,6 +1664,7 @@ merge_checks() {
       *) echo "  checks: no \`araniko check\` run recorded for this brief" ;;
     esac
   fi
+  scope_acceptance_checks "$1" "$2" "${3:-}"
 }
 
 # A second opinion (`araniko review second`): the project's policy (Project settings →
@@ -1268,13 +1712,39 @@ second_opinion_gate() {
   fi
 }
 
+# ---------------------------------------------------------------- merge --check --verify
+# The brief's ```bash verify``` blocks (under ## Checks) on HEAD plus exactly handoff $1's
+# listed changes, in a detached worktree under handoffs/.nayo/verify/ that is always removed;
+# $2/$3 = an isolated worker's worktree and its branch point, where the changes are.
+# nayo-verify.py does the work; uses cmd_merge's locals verify and reuse. Exits with the
+# verifier's code when it isn't 0 (1 failed, 2 setup, 75 rerun later, 124 timeout).
+verify_run() {
+  [ "${verify:-0}" = 1 ] || return 0
+  local d py rc age="${NAYO_REUSE_MAX_AGE:-7200}"
+  have python3 || die "--verify needs python3, and there's none on PATH (nothing run)"
+  case "$age" in ""|*[!0-9]*) die "NAYO_REUSE_MAX_AGE takes whole seconds (0 = never reuse), not '$age'" ;; esac
+  d=$(cd "$(dirname "$0")" 2>/dev/null && pwd) && [ -f "$d/nayo-verify.py" ] || d="$ROOT/$H/bin"
+  py="$d/nayo-verify.py"
+  [ -f "$py" ] || die "no $py — update the Nayo kit (nothing run)"
+  echo "  verify: running the brief's verify blocks in a worktree of HEAD + the listed changes (Ctrl-C cancels)"
+  python3 -I "$py" --root "$ROOT" --handoff "$1" --runner "$d/$(basename "$0")" --bash "$BASH" \
+    ${2:+--source "$2" --base "$3"} --reuse="${reuse:-0}" --max-age "$age" \
+    --max-sec "${NAYO_VERIFY_MAX_SEC:-7200}" --lock-wait "${NAYO_LOCK_WAIT:-3600}" \
+    --grace "${NAYO_STOP_GRACE:-10}" --reuse-env "${NAYO_REUSE_ENV:-}"
+  rc=$?
+  [ $rc = 0 ] || exit $rc
+}
+
 cmd_merge() {
   local ho="" check=0 msg="" outcome="" push="$NAYO_PUSH" keep=0 force=0 so_block="" skip_so="" rv=""
+  local verify=0 reuse=0
   local anyway="" red_why=""
   local status brief agent files f bad=0 red=0 checks other title dest trailer sha term old_tracked=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) check=1; shift ;;
+      --verify) verify=1; shift ;;
+      --reuse) reuse=1; shift ;;
       -m) msg="${2:-}"; shift 2 ;;
       --outcome) outcome="${2:-}"; shift 2 ;;
       --no-push) push=0; shift ;;
@@ -1285,7 +1755,9 @@ cmd_merge() {
       *) ho="$1"; shift ;;
     esac
   done
-  [ -f "$ho" ] || die "usage: nayo merge <handoffs/file.md> [--check] [-m msg] [--outcome clean|corrected|escalated|respawned] [--no-push] [--keep-open]"
+  [ $verify = 0 ] || [ $check = 1 ] || die "--verify goes with --check: nayo merge <handoff> --check --verify [--reuse]"
+  [ $reuse = 0 ] || [ $verify = 1 ] || die "--reuse goes with --check --verify"
+  [ -f "$ho" ] || die "usage: nayo merge <handoffs/file.md> [--check [--verify [--reuse]]] [-m msg] [--outcome clean|corrected|escalated|respawned] [--no-push] [--keep-open]"
   status=$(field status "$ho" | awk '{print $1}')
   brief=$(field brief "$ho" | awk '{print $1}')
   agent=$(field agent "$ho")
@@ -1315,16 +1787,17 @@ cmd_merge() {
   done
   merge_checks "$brief" "$ho"
   second_opinion "$ho"
-  [ $check = 1 ] && { [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
+  [ $check = 1 ] && { verify_run "$ho"; [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
 
   [ "$status" = blocked ] && die "status is blocked — answer its questions first"
   checks_gate
   [ $bad = 1 ] && [ $force = 0 ] && die "file list doesn't match git status — send it back, or --force"
   second_opinion_gate "$ho"
+  team_guard "$push"
   checks_anyway_log "$ho"
 
   mkdir -p "$H/merged"
-  dest="$H/merged/$(basename "$ho")"
+  dest="$H/merged/$(owner_name "$(basename "$ho")")"
   term=""; [ -n "$brief" ] && term=$(brief_term "$brief")
   [ -n "$brief" ] && open_drop "$brief"
   open_drop "$(basename "$ho")"
@@ -1356,13 +1829,17 @@ cmd_merge() {
   line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files"
 
   if [ "$push" = 1 ]; then
-    # A push can still fail (offline, the remote moved on); the commit stays.
-    # A branch Nayo pushes its branch (with -u the first time: a new one has no upstream).
-    set -- -q
-    if [ -n "$WT" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
-      set -- -q -u origin "$(git branch --show-current)"
+    if [ -n "$TEAM_CONF" ]; then
+      line="$line · $(team_push)"
+    else
+      # A push can still fail (offline, the remote moved on); the commit stays.
+      # A branch Nayo pushes its branch (with -u the first time: a new one has no upstream).
+      set -- -q
+      if [ -n "$WT" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+        set -- -q -u origin "$(git branch --show-current)"
+      fi
+      if git push "$@" 2>/dev/null; then line="$line · pushed"; else line="$line · push failed, so the commit stays local until the next push"; fi
     fi
-    if git push "$@" 2>/dev/null; then line="$line · pushed"; else line="$line · push failed, so the commit stays local until the next push"; fi
   else
     line="$line · not pushed (--no-push or NAYO_PUSH=0)"
   fi
@@ -1372,7 +1849,7 @@ cmd_merge() {
   if [ -n "$outcome" ] && [ -x "$BIN/jev.sh" ] && [ -n "$brief" ]; then
     "$BIN/jev.sh" outcome "$brief" "$outcome" >/dev/null 2>&1
   fi
-  echo "$line · OPEN.md updated in the same commit"
+  echo "$line · $(basename "$OPEN") updated in the same commit"
   return 0
 }
 
@@ -1381,20 +1858,43 @@ cmd_merge() {
 # same list lives in crates/araniko-daemon/src/health.rs (`rename_leftovers`), whose
 # `rename_leftover` health finding points at `nayo commit-rename`: change both.
 
-# .gitignore differs from HEAD only where a line's first `.ultron` became `.araniko`.
+# .gitignore differs from HEAD only where a line's first `.ultron` became `.araniko` (or
+# its first `.jarvis` became `.nayo`), plus any added `handoffs/.nayo/` or `handoffs/.jev/` line.
 gitignore_renamed() {
   local head
   [ -f .gitignore ] || return 1
   head=$(git show HEAD:.gitignore 2>/dev/null) || return 1
   printf '%s\n' "$head" | awk -v now=.gitignore '
+    function ren(s,  r) { r = s; if (sub(/\.ultron/, ".araniko", r)) return r; r = s; sub(/\.jarvis/, ".nayo", r); return r }
+    function added(s) { return s ~ /^\/?handoffs\/\.(nayo|jev)\/?[[:space:]]*$/ }
     { h[NR] = $0 } END {
       while ((getline l < now) > 0) n[++c] = l
       m = NR
       while (m > 0 && h[m] ~ /^[[:space:]]*$/) m--
       while (c > 0 && n[c] ~ /^[[:space:]]*$/) c--
-      if (m != c) exit 1
-      for (i = 1; i <= c; i++) { r = h[i]; sub(/\.ultron/, ".araniko", r); if (n[i] != h[i] && n[i] != r) exit 1 }
+      i = 1
+      for (j = 1; j <= c; j++) {
+        if (i <= m && (n[j] == h[i] || n[j] == ren(h[i]))) i++
+        else if (!added(n[j])) exit 1
+      }
+      if (i <= m) exit 1
     }'
+}
+
+# A kit file the Jarvis → Nayo move rewrote: HEAD's mentions Jarvis, the working copy
+# mentions Nayo and no longer points at bin/jarvis, JARVIS.md, jarvis.conf or jarvis:run.
+# Prints 0 (not renamed), 1 (renamed) or 2 (renamed .claude/settings.json whose HEAD
+# version runs a handoffs/bin/jarvis that's gone, so it's broken until committed).
+kit_renamed() {
+  local head
+  [ -f "$1" ] || { echo 0; return; }
+  head=$(git show "HEAD:$1" 2>/dev/null) || { echo 0; return; }
+  if ! printf '%s\n' "$head" | grep -qi jarvis || ! grep -qi nayo "$1" \
+    || grep -Eqi 'bin/jarvis|jarvis\.md|jarvis\.conf|jarvis:run' "$1"; then
+    echo 0; return
+  fi
+  if [ "$1" = .claude/settings.json ] && [ ! -e handoffs/bin/jarvis ] \
+    && printf '%s\n' "$head" | grep -q 'handoffs/bin/jarvis'; then echo 2; else echo 1; fi
 }
 
 rename_leftovers() { # one leftover path per line
@@ -1416,6 +1916,10 @@ rename_leftovers() { # one leftover path per line
       handoffs/briefs/TEMPLATE.md|handoffs/TEMPLATE.md) k=with ;;
       .claude/agents/*/*) ;;
       .claude/agents/*.md) k=with ;;
+      .claude/settings.json|CLAUDE.md|AGENTS.md|handoffs/bin/jev.sh|handoffs/bin/cc_usage_audit.py)
+        case "$xy" in *D*|'??'|A*) ;; *)
+          case $(kit_renamed "$p") in 1) k=with ;; 2) k=yes ;; esac ;;
+        esac ;;
     esac
     case $k in
       yes) yes="$yes$p
@@ -1584,13 +2088,74 @@ iso_cargo() {
   printf '# written by nayo spawn --isolate: isolated worktrees build into one shared folder\n[build]\ntarget-dir = "%s"\n' "$(iso_target)" > "$f"
 }
 
-# The prompt for an isolated worker on brief $1 in ISO_WT/ISO_BR ($2 = the --after handoff).
+# The worker rules every spawned worker gets inline, condensed from AGENTS.md "Worker rules"
+# and "When you finish a task". Keep it true to AGENTS.md (and the same in both kit scripts);
+# project-specific bits stay in AGENTS.md and are pointed at, not copied.
+worker_rules() {
+  cat <<'EOF'
+- Several workers share this checkout. Never commit, push, tag or open a PR, and never run git that changes state (stash, checkout --, restore, reset, clean, switch, worktree, rebase, merge): it reverts other workers' edits. Read-only git (status, diff, log, show, blame) is fine.
+- The brief's ## File scope is a hard boundary: touch nothing outside it. Edit a shared file only minimally and name it in your handoff. Some things only Nayo does (dependencies, lockfiles, toolchains, releasing: `grep -n 'Only Nayo' AGENTS.md` for this project's list); write what's needed and flag it in your handoff.
+- Your subagents follow these same rules: they read and summarise, never edit.
+- Never ask the user anything or wait in the terminal. If you need rulings, put every question in your first handoff (status: blocked) and stop; start each with the brief's task, `1. (T-41) …`. Once the answers arrive, finish the brief without stopping again.
+- Reading: grep -n first, then read line ranges (sed -n 'a,bp', or Read with offset/limit), at most ~150 lines at a time. Never cat or Read a whole file over 150 lines, nor a whole handoff or brief. Don't read the same lines twice; check your own edits with a test or grep -n. Pipe searches through head; from a build or test show only the failures. Read only the docs your brief names.
+- Screenshots only to verify the finished result, once per screen. Never sleep-poll: run in the foreground with a timeout, or in the background and wait for its notification.
+- Checks: scoped only. Run the brief's Acceptance command, the tests for what you touched and the linter/formatter on your own files; never the full suite or `araniko check` (Nayo runs those at merge). For this project's verification and checks, `grep -n 'Verification\|Checks:' AGENTS.md`.
+- One brief, then hand off: do this brief's phase, write the handoff, stop. Write it for the next worker: what's done, what's left, where.
+- The handoff is one file, handoffs/<YYYY-MM-DD-HHMM>-<short-slug>.md:
+    # <one-line task title>
+    status: done | blocked | partial
+    agent: claude <model> | codex <model>
+    brief: <this brief's path>
+    ## What the user asked
+    ## What changed            (behaviour, in plain words)
+    ## Files                   (- path/relative/to/repo — created | modified | deleted; complete and exact: Nayo commits by it)
+    ## Checks run              (what you ran, filtered; say plainly what you didn't check)
+    ## Libraries used          (one line per library from the brief's Libraries and design rules you used or touched, or `none touched`)
+    ## Questions for the user  (only when status: blocked; numbered, one line each)
+    ## Notes for Nayo          (things only Nayo may do, shared-file edits, a suggested commit message)
+  Then say in the terminal that you've handed off and name the file. More instructions for the same task update that same file.
+EOF
+}
+
+# Brief $1 as a worker sees it inline: the header's after:, redo: and why: lines dropped (the
+# Already done block covers after:), and for a claude worker ($2) the `## Libraries and design
+# rules` section too (the daemon appends that knowledge to its system prompt). The file is unchanged.
+brief_for_worker() {
+  awk -v kn="$([ "$2" = claude ] && echo 1 || echo 0)" '
+    /^## / { body = 1; sub(/[[:space:]]+$/, ""); skip = (kn == 1 && $0 == "## Libraries and design rules") }
+    !body && /^(after|redo|why):/ { next }
+    !skip' "$1"
+}
+
+# A worker's opening prompt: who it is, the worker rules and brief $1 inline (shown as $3), and
+# with an --after handoff $2 (shown as $4) its What changed and Files sections; $5 = the worker kind.
+worker_prompt() {
+  local done
+  printf "You are a Nayo worker. Your brief and the worker rules are below; don't open AGENTS.md or the brief file (%s), everything you need from them is here." "$3"
+  printf '\n\n## Worker rules\n\n%s' "$(worker_rules)"
+  printf '\n\n## Your brief\n\n%s' "$(brief_for_worker "$1" "$5")"
+  if [ -n "$2" ]; then
+    done=$(awk '/^## /{sub(/[[:space:]]+$/, ""); on = ($0 == "## What changed" || $0 == "## Files"); if (on) print; next} on' "$2" 2>/dev/null | head -40)
+    printf '\n\n## Already done\n\n%s\n\nThat is from %s, which records what is already done: start from there. The full handoff is %s; grep it, don'"'"'t read it whole.' \
+      "${done:-(its What changed and Files sections are empty)}" "$4" "$4"
+  fi
+}
+
+# The lessons in handoffs/LESSONS.md that match brief $1's File scope, as a short block
+# (at most 10 lines) for the end of a worker's prompt; nothing when none match or it fails.
+lessons_block() {
+  local b
+  have python3 && [ -f "$BIN/nayo-lessons.py" ] && [ -f "$H/LESSONS.md" ] || return 0
+  b=$(cd "$ROOT" && python3 -I "$BIN/nayo-lessons.py" select --brief "$1" 2>/dev/null) || return 0
+  [ -n "$b" ] && printf '\n\n%s' "$b"
+}
+
+# The prompt for an isolated worker on brief $1 in ISO_WT/ISO_BR ($2 = the --after handoff, $3 = the worker kind).
 iso_prompt() {
   local prompt mainbr
   mainbr=$(git symbolic-ref --short HEAD 2>/dev/null || echo main)
-  prompt="You are a Nayo worker. Read AGENTS.md, then do the task in $(iso_abs "$1")."
-  [ -n "$2" ] && prompt="$prompt $(iso_abs "$2") records what is already done — start from there."
-  prompt="$prompt You are isolated: your working directory $ISO_WT is your own git worktree on branch $ISO_BR, so edit, build and test only inside it (the brief's repo paths are relative to it). Write your handoff to the main checkout, $ROOT/handoffs/ (an absolute path), and list files relative to the repo as usual."
+  prompt="$(worker_prompt "$1" "$2" "$(iso_abs "$1")" "${2:+$(iso_abs "$2")}" "$3")"$'\n\n'
+  prompt="${prompt}You are isolated: your working directory $ISO_WT is your own git worktree on branch $ISO_BR, so edit, build and test only inside it (the brief's repo paths are relative to it). Write your handoff to the main checkout, $ROOT/handoffs/ (an absolute path), and list files relative to the repo as usual."
   if [ -n "$(field merges "$1")" ]; then
     prompt="$prompt This brief is a merge: run git merge $mainbr inside $ISO_WT — the one git command you may run that changes state (git merge --abort to start over); never commit, Nayo commits the merge."
   else
@@ -1632,7 +2197,7 @@ iso_changed() {
 # force, status, brief, agent, files, red, red_why, anyway).
 merge_isolated() {
   local wt br mainbr base merging=0 changed other f bad=0 unmerged dirty trailer title
-  local mt rc tree conflicts touched outside dest term old_tracked=0 orig obrief oterm sha line left
+  local mt rc tree conflicts touched outside dest term old_tracked=0 orig obrief oterm sha line left pb="" lo=""
   wt=$(iso_path "$brief"); br=$(iso_branch "$brief")
   git -C "$wt" rev-parse --git-dir >/dev/null 2>&1 || die "$brief says isolate: $wt, but that worktree is gone"
   [ -n "$br" ] || br=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null)
@@ -1646,6 +2211,25 @@ merge_isolated() {
 
   echo "$ho · status: $status · brief: $brief · isolated: $br in $wt"
   changed=$(iso_changed "$wt" "$base")
+  # changes outside the brief's File scope go back to the branch point (a dry run names them)
+  if brief_checked "$brief"; then
+    if [ $merging = 1 ]; then
+      echo "  scope: a merge is in progress in the worktree, so nothing is put back"
+    elif [ $check = 1 ] || [ "$status" = blocked ]; then
+      pb=$(iso_unlisted "$brief" "$ho" "$wt" "$base")
+      [ -z "$pb" ] || { echo "  scope: the merge puts these back on $br (outside the File scope, not listed):"; printf '%s\n' "$pb" | sed 's/^/    /'; }
+    else
+      pb=$(iso_put_back "$brief" "$ho" "$wt" "$base" "$br") || exit 1
+      if [ -n "$pb" ]; then
+        echo "  scope: put back on $br (outside the File scope, not listed; noted in the handoff):"
+        printf '%s\n' "$pb" | awk -F '\t' '{print "    " $1 " — patch: " $2}'
+        changed=$(iso_changed "$wt" "$base")
+      fi
+    fi
+    # listed files outside the scope are the worker's declared work: never put back; red
+    # below, so only --anyway merges them (and logs it)
+    lo=$(printf '%s\n' $files | outside_scope "$brief" "$ho")
+  fi
   for f in $files; do
     printf '%s\n' "$changed" | grep -qxF "$f" || { echo "  ✗ listed but not changed (in the worktree): $f"; bad=1; }
   done
@@ -1672,9 +2256,14 @@ merge_isolated() {
   done
   dirty=$(git status --porcelain -uall -- $files 2>/dev/null | cut -c4- | sed -e 's/.* -> //' -e 's/^"//' -e 's/"$//')
   [ -z "$dirty" ] || { echo "  ✗ uncommitted changes in the main checkout in listed files:"; printf '%s\n' "$dirty" | sed 's/^/    /'; }
-  merge_checks "$brief" "$ho"   # Araniko's run on the handoff, else the brief's last `araniko check`; sets red
+  merge_checks "$brief" "$ho" "$wt"   # the Araniko checks, then scope and acceptance; sets red
+  if [ -n "$lo" ]; then
+    echo "  ✗ scope: the handoff lists files outside the brief's File scope (not put back; --anyway merges them):"
+    printf '%s\n' "$lo" | sed 's/^/    /'
+    red=1; red_why="${red_why:+$red_why; }the handoff lists files outside the brief's File scope ($(printf '%s ' $lo | sed 's/ $//'))"
+  fi
   second_opinion "$ho"
-  [ $check = 1 ] && { [ -z "$dirty" ] && [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
+  [ $check = 1 ] && { verify_run "$ho" "$wt" "$base"; [ -z "$dirty" ] && [ -z "$so_block" ] || exit 1; exit $((bad | red)); }
 
   [ "$status" = blocked ] && die "status is blocked — answer its questions first"
   checks_gate
@@ -1683,7 +2272,12 @@ merge_isolated() {
   [ -z "$dirty" ] || die "the main checkout has uncommitted changes in listed files — commit or move them first"
   git diff --cached --quiet || die "the main checkout has staged changes; the merge commit would take them — commit or unstage them first"
   second_opinion_gate "$ho"
+  team_guard "$push"
   checks_anyway_log "$ho"
+  if [ -n "$lo" ]; then
+    handoff_section "$ho" "Scope (merged anyway by nayo merge)" "$(printf 'Listed but outside the File scope, merged with --anyway (%s):\n' "$anyway"; printf -- '- %s\n' $lo)" new
+    echo "  scope: merged anyway (listed, outside the File scope; logged in the handoff): $(printf '%s ' $lo | sed 's/ $//')"
+  fi
 
   # 1. commit the listed files on the branch, inside the worktree
   title=$(sed -n '1s/^#[[:space:]]*//p' "$ho")
@@ -1724,7 +2318,7 @@ merge_isolated() {
   fi
 
   mkdir -p "$H/merged"
-  dest="$H/merged/$(basename "$ho")"
+  dest="$H/merged/$(owner_name "$(basename "$ho")")"
   term=$(brief_term "$brief")
   open_drop "$brief"
   open_drop "$(basename "$ho")"
@@ -1742,7 +2336,7 @@ merge_isolated() {
     [ -n "$obrief" ] && open_drop "$obrief"
     open_drop "$(basename "$orig")"
     git ls-files --error-unmatch -- "$orig" >/dev/null 2>&1 && set -- "$@" "$orig"
-    mv "$orig" "$H/merged/$(basename "$orig")"; set -- "$@" "$H/merged/$(basename "$orig")"
+    mv "$orig" "$H/merged/$(owner_name "$(basename "$orig")")"; set -- "$@" "$H/merged/$(owner_name "$(basename "$orig")")"
     [ -n "$obrief" ] && [ -f "$obrief" ] && set -- "$@" "$obrief"
   fi
   [ -f "$OPEN" ] && set -- "$@" "$OPEN"
@@ -1752,8 +2346,12 @@ merge_isolated() {
   line="merged $sha · $(printf '%s\n' $files | wc -l | tr -d ' ') files from $br"
 
   if [ "$push" = 1 ]; then
-    # A push can still fail (offline, the remote moved on); the commit stays.
-    if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push failed, so the commit stays local until the next push"; fi
+    if [ -n "$TEAM_CONF" ]; then
+      line="$line · $(team_push)"
+    else
+      # A push can still fail (offline, the remote moved on); the commit stays.
+      if git push -q 2>/dev/null; then line="$line · pushed"; else line="$line · push failed, so the commit stays local until the next push"; fi
+    fi
   else
     line="$line · not pushed (--no-push or NAYO_PUSH=0)"
   fi
@@ -1774,7 +2372,7 @@ merge_isolated() {
   else
     line="$line · couldn't remove $wt / $br (nayo clean-worktrees)"
   fi
-  echo "$line · OPEN.md updated in the same commit"
+  echo "$line · $(basename "$OPEN") updated in the same commit"
   return 0
 }
 
@@ -1794,7 +2392,7 @@ iso_conflict() {
     done
   done
   ts=$(date '+%Y-%m-%d-%H%M'); slug=${br#jw/}
-  mb="$H/briefs/$ts-merge-$slug.md"
+  mb="$H/briefs/$(owner_name "$ts-merge-$slug.md")"
   tasks=$(awk '/^## /{exit} /^Tasks:/{print; exit}' "$brief")
   checks=$(awk '/^## /{on = ($0 ~ /^## Checks/); next} on' "$brief" | sed -e '/./,$!d')
   {
@@ -1828,7 +2426,7 @@ iso_conflict() {
     echo "## Phase"
     echo "1. \`cd $wt && git merge $mainbr\`"
     echo "2. Resolve each conflicting path by hand, keeping both changes; then the checks."
-    echo "3. Write the handoff to \`$ROOT/handoffs/$ts-merge-$slug.md\` with \`brief: $mb\`. Its \`## Files\` lists every file of the branch's handoff above, plus any other path you had to edit."
+    echo "3. Write the handoff to \`$ROOT/handoffs/$(owner_name "$ts-merge-$slug.md")\` with \`brief: $mb\`. Its \`## Files\` lists every file of the branch's handoff above, plus any other path you had to edit."
     echo
     echo "## Checks"
     if [ -n "$checks" ]; then printf '%s\n' "$checks"; else echo "The repo's checks line (CLAUDE.md), run in the worktree."; fi
@@ -1932,7 +2530,7 @@ hook_prompt() {
   # a chat session has no typed /clear: the daemon restarts it fresh
   how="/clear"
   [ "$(transport_of "$ME")" = stream ] && how="Clear in the Araniko app (or araniko term clear $ME)"
-  jq -n --arg r "Nayo has been idle ${gap} min, so its prompt cache has expired: this message would write all $((ctx / 1000))k tokens of context again (about \$${usd} at API prices). Cheaper: $how, then \"resume\" — Nayo reloads from handoffs/OPEN.md. To go ahead anyway, send your message again." \
+  jq -n --arg r "Nayo has been idle ${gap} min, so its prompt cache has expired: this message would write all $((ctx / 1000))k tokens of context again (about \$${usd} at API prices). Cheaper: $how, then \"resume\" — Nayo reloads from $OPEN. To go ahead anyway, send your message again." \
     '{decision: "block", reason: $r}'
 }
 
@@ -2007,11 +2605,36 @@ cmd_usage() {
         + (if .sessions > 1 then " · run \(.sessions) times" else "" end))' || true
 }
 
+# ---------------------------------------------------------------- lock
+
+# `nayo lock` and `nayo resources` live in nayo-lock.pl beside this script (its header
+# says how). They need only perl (macOS ships it; there's no flock(1)) and work with no
+# OPEN.md, outside any host. The caller's directory is $OLDPWD: the cd to $ROOT above
+# is the script's only one before this runs.
+cmd_lock() { # $1 = lock|resources, then its arguments
+  local d v
+  d=$(dirname "$0"); case "$d" in /*) ;; *) d="$OLDPWD/$d" ;; esac
+  if ! have perl; then
+    # a CI runner has no other agents to queue behind, and minimal images have no perl
+    case "$1:${CI:-}" in lock:|lock:0|lock:false|resources:*)
+      echo "nayo $1: needs perl for the kernel lock, and there's none on PATH (nothing was run)" >&2; exit 2 ;;
+    esac
+    shift 2
+    while [ $# -gt 0 ]; do case "$1" in --wait) shift 2 ;; --reuse) shift ;; --) shift; break ;; *) break ;; esac; done
+    echo "nayo lock: no perl on this CI runner (CI=$CI), so running without the lease" >&2
+    cd "$OLDPWD" && exec "$@"
+  fi
+  [ -f "$d/nayo-lock.pl" ] || { echo "nayo $1: no $d/nayo-lock.pl — run the Nayo setup again (nothing was run)" >&2; exit 2; }
+  for v in $(compgen -v | grep -E '^(NAYO|JARVIS)_LOCK_'); do export "$v"; done
+  NAYO_ROOT="$ROOT" NAYO_CALLER_PWD="$OLDPWD" exec perl "$d/nayo-lock.pl" "$@"
+}
+
 # ---------------------------------------------------------------- main
 
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
+  lock|resources) cmd_lock "$cmd" "$@" ;;
   start) cmd_start "$@" ;;
   status) cmd_status ;;
   band) cmd_band ;;
@@ -2026,6 +2649,7 @@ case "$cmd" in
   events) cmd_events ;;
   usage) cmd_usage "$@" ;;
   statusline) cmd_statusline ;;
+  lessons) exec python3 -I "$BIN/nayo-lessons.py" "$@" ;;
   hook)
     case "${1:-}" in
       prompt) hook_prompt ;;

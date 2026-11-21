@@ -19,8 +19,10 @@ Several workers edit the same checkout at once, in separate Araniko sessions. So
   `git clean`, `git switch`, `git worktree`, or `git rebase`/`merge`.** Any of
   them silently reverts other workers' uncommitted edits. Read-only git
   (`status`, `diff`, `log`, `show`, `blame`) is fine.
-- **Touch only the files your task needs.** The brief's "may touch" list is a
-  hard boundary, not a hint — several workers share this checkout, and a file
+- **Touch only the files your task needs.** The brief's `## File scope` (an
+  older brief's "may touch" list) is a hard boundary, not a hint: `nayo merge`
+  refuses a handoff listing a file outside it and puts an isolated worker's
+  changes outside it back — several workers share this checkout, and a file
   you edit outside it is someone else's work you just broke. If you must edit a shared file
   (project manifests and shared configuration), keep the edit minimal and name it in your handoff.
 - **Your own subagents follow these same rules** — say so in their briefs.
@@ -35,6 +37,10 @@ Several workers edit the same checkout at once, in separate Araniko sessions. So
 - **Tasks.** The brief's `Tasks:` header line names what the user asked for
   (`T-41`; older briefs say `Asks: 31.2`). Leave it as it is, and start each
   question for the user with the task it's about: `1. (T-41) …`.
+- **Your first prompt carries your brief and these rules**, condensed, so
+  don't open this file or the brief to start. Read by `grep -n`, then line
+  ranges; never a whole file over 150 lines (a hook refuses them in Claude
+  workers).
 <!-- araniko:reading-rules: Araniko appends this bullet to every Claude worker's system prompt, so keep it self-contained -->
 - **Keep your context small: every step re-sends all of it.** Whatever you
   read stays in your context and is paid for again on every later call, so
@@ -64,12 +70,16 @@ Several workers edit the same checkout at once, in separate Araniko sessions. So
   handoff, and stop. The next phase gets a fresh worker that starts from your
   handoff, so write it for that reader: what's done, what's left, where.
 - **Verification:** Use isolated test data and report the exact checks run.
-- **Checks:** run `araniko check` before handing off. It runs the project's
-  checks (`scripts/check-ios.sh`: xcodebuild test; `scripts/check-backend.sh`: Convex typecheck + tests), from `checks:` in `.araniko/project.yaml`, records the
-  result for Nayo and prints a `## Checks run` section: paste it into your
-  handoff as it is. Nayo won't merge a handoff whose checks are red. A run
-  can take minutes, so give the call a long timeout. Say plainly what you
-  didn't check.
+- **Checks: scoped only, never the full suite.** This rule is broken most often and costs the most: a
+  full `cargo test --workspace` (or `npm test`, `araniko check`), even in the background, has
+  stalled workers 20 minutes. Run only scoped checks before handing off: the brief's
+  Acceptance command, the tests for the module or package you touched, and
+  the linter/formatter on your own files (the project's full checks are
+  `scripts/check-ios.sh`: xcodebuild test; `scripts/check-backend.sh`: Convex typecheck + tests). Don't run the whole test suite or `araniko check`: other
+  workers build in this checkout, so a full run queues behind their builds
+  for many minutes. Araniko runs the full checks on your handoff and Nayo
+  runs them at merge. Put what you ran, filtered, under `## Checks run`,
+  and say plainly what you didn't check.
 
 ## Isolated workers
 
@@ -78,7 +88,7 @@ your own branch (`jw/<slug>`), outside the repo, so another worker can edit
 the same file at once. What changes for you:
 
 - **Your working directory is the worktree.** Edit, build and test only
-  there, `araniko check` included; the brief's repo paths are relative to it.
+  there, checks included; the brief's repo paths are relative to it.
   Never touch the main checkout. The main checkout's `node_modules` folders
   are linked in, and cargo builds go to a shared build folder, so nothing
   needs installing (the first build can still wait on another worker's).
@@ -90,6 +100,21 @@ the same file at once. What changes for you:
   you run `git merge <main branch>` inside your worktree, and
   `git merge --abort` to start over. Resolve the conflicts, but don't stage
   by hand or commit. Nayo commits the merge.
+
+## Missing env vars
+
+When the code needs an env var whose exact name isn't in the project's
+`.env*` files (`.env`, `.env.local`, `.env.development`, …), look for a near one first:
+- List the names only:
+  `find . -maxdepth 1 -name '.env*' -exec grep -ho '^[A-Z_][A-Z0-9_]*=' {} + | cut -d= -f1`.
+  Never print, echo or log a value while searching.
+- A near name has the same provider or service word (Anthropic and Claude count as one),
+  any of `_KEY`/`_API_KEY`/`_TOKEN`/`_SECRET`, with or without `VITE_`, `NEXT_PUBLIC_`,
+  `EXPO_PUBLIC_` or `REACT_APP_`.
+- One clear match: use it. Point the code or config at the existing name, or map it to
+  the expected name where the framework allows. Never copy the value into a tracked file,
+  a brief, a handoff or chat. Say in one line which name stood in for which.
+- Several candidates, or none: ask in your handoff, naming the candidates (names only).
 
 ## When you finish a task
 
@@ -107,7 +132,7 @@ brief: handoffs/briefs/<the brief you worked from>.md
 ## Files
 - path/relative/to/repo — created | modified | deleted
 ## Checks run
-<what `araniko check` printed, plus anything else you checked; say plainly what wasn't checked>
+<the scoped checks you ran and their filtered results; say plainly what wasn't checked>
 ## Libraries used
 <one line per library touched, or `none touched`>
 ## Questions for the user

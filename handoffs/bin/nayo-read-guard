@@ -1,0 +1,276 @@
+#!/usr/bin/env -S python3 -I
+"""nayo-read-guard: Claude Code PreToolUse hook (matcher Read|Bash) for worker sessions.
+
+Workers read in ranges: grep -n, then sed -n 'a,bp' or Read with offset+limit. This hook
+refuses the reads that blow a worker's context: an unbounded Read of a file over
+MAX_LINES lines or of a brief/merged handoff, a Read with limit > MAX_LIMIT, and a bare
+`cat`/`less`/`more`/`bat`/`nl` (or `head`/`tail` over MAX_LIMIT lines) of such a file
+whose output isn't piped on.
+
+Only active when ARANIKO_ROLE=worker. Anything it can't parse, or any error, is allowed:
+the guard must never break a session. Stdlib only.
+"""
+import json
+import os
+import re
+import shlex
+import sys
+
+MAX_LINES = 150  # an unbounded read of a file longer than this is refused
+MAX_LIMIT = 200  # the largest range a worker may read at once
+GUARDED_DIRS = ("handoffs/merged/", "handoffs/briefs/")
+BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff",
+              ".heic", ".ico", ".pdf"}
+DUMPERS = {"cat", "less", "more", "bat", "nl"}
+SEPARATORS = {"&&", "||", ";", "&", ";;"}
+PIPES = {"|", "|&"}
+
+
+def resolve(path, base):
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(base, path)
+    return os.path.normpath(path)
+
+
+def guarded(abspath):
+    p = abspath.replace(os.sep, "/")
+    return any(("/" + d) in p or p.startswith(d) for d in GUARDED_DIRS)
+
+
+def line_count(abspath):
+    """Lines in a regular file, or None when it can't be read."""
+    if not os.path.isfile(abspath):
+        return None
+    n = 0
+    last = b"\n"
+    with open(abspath, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            n += chunk.count(b"\n")
+            last = chunk[-1:]
+            if n > 10_000_000:
+                break
+    if last != b"\n":
+        n += 1
+    return n
+
+
+def problem(shown, abspath, need_bounded):
+    """Why reading this file whole is refused, or None. need_bounded: the read has no
+    limit (or one over MAX_LIMIT) so it counts as whole."""
+    if not need_bounded:
+        return None
+    n = line_count(abspath)
+    if n is None:
+        return None
+    if guarded(abspath):
+        return f"{shown} is a brief/handoff"
+    if n > MAX_LINES:
+        return f"{shown} is {n} lines"
+    return None
+
+
+def deny(what, shown):
+    msg = (f"{what}. Workers read in ranges: grep -n '<pattern>' {shown}, then "
+           f"sed -n 'a,bp' {shown} or Read with offset+limit (≤{MAX_LIMIT} lines). "
+           "Your brief is already in your first prompt.")
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": msg,
+    }}))
+    sys.exit(0)
+
+
+def check_read(inp, cwd):
+    path = inp.get("file_path")
+    if not isinstance(path, str) or not path:
+        return
+    if os.path.splitext(path)[1].lower() in BINARY_EXT:
+        return
+    limit = inp.get("limit")
+    abspath = resolve(path, cwd)
+    if not os.path.isfile(abspath):
+        return
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return
+        if limit > MAX_LIMIT:
+            deny(f"Read limit {limit} is over {MAX_LIMIT} lines", path)
+        return
+    why = problem(path, abspath, True)
+    if why:
+        deny(why, path)
+
+
+def strip_heredocs(command):
+    """Drop heredoc bodies so their lines aren't read as commands."""
+    out, ends = [], []
+    for line in command.split("\n"):
+        if ends:
+            if line.strip() == ends[0] or line.lstrip("\t") == ends[0]:
+                ends.pop(0)
+            continue
+        out.append(line)
+        for m in re.finditer(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", line):
+            ends.append(m.group(2))
+    return out
+
+
+def segments(line):
+    """Commands on one line: lists of pipeline stages, each a list of tokens."""
+    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = "#"
+    tokens = list(lex)
+    segs, stages, cur = [], [], []
+    for t in tokens:
+        if t in SEPARATORS:
+            stages.append(cur)
+            segs.append(stages)
+            stages, cur = [], []
+        elif t in PIPES:
+            stages.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    stages.append(cur)
+    segs.append(stages)
+    return segs
+
+
+def split_redirects(tokens):
+    """(words, writes_elsewhere): words without redirections; writes_elsewhere when stdout
+    goes to a file or the input is a heredoc/here-string."""
+    words, elsewhere, skip = [], False, False
+    for i, t in enumerate(tokens):
+        if skip:
+            skip = False
+            continue
+        if t and set(t) <= set("<>&|"):
+            if t in ("<<", "<<-", "<<<"):
+                elsewhere = True
+            elif t in (">", ">>", ">|", "&>", "&>>"):
+                nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+                if not nxt.startswith("&"):
+                    elsewhere = True
+            # `2>&1`: the `2` before was already taken as a word; drop it
+            if words and words[-1].isdigit() and t.startswith((">", "<")):
+                words.pop()
+            skip = True
+            continue
+        words.append(t)
+    return words, elsewhere
+
+
+def count_arg(words):
+    """head/tail line count: an int, None for unbounded (tail +N), 10 by default."""
+    n = 10
+    it = iter(range(1, len(words)))
+    for i in it:
+        w = words[i]
+        val = None
+        if w in ("-n", "--lines"):
+            val = words[i + 1] if i + 1 < len(words) else None
+            next(it, None)
+        elif w.startswith("--lines="):
+            val = w.split("=", 1)[1]
+        elif w.startswith("-n"):
+            val = w[2:]
+        elif re.fullmatch(r"-\d+", w):
+            val = w[1:]
+        elif w in ("-c", "--bytes"):
+            next(it, None)
+            continue
+        if val is None:
+            continue
+        if val.startswith("+"):
+            return None  # from line N to the end
+        m = re.match(r"\d+", val)
+        if m:
+            n = int(m.group(0))
+    return n
+
+
+def file_args(words, cmd):
+    files, skip = [], False
+    for i, w in enumerate(words[1:], 1):
+        if skip:
+            skip = False
+            continue
+        if cmd in ("head", "tail") and w in ("-n", "--lines", "-c", "--bytes"):
+            skip = True
+            continue
+        if w.startswith("-") and w != "-":
+            continue
+        files.append(w)
+    return files
+
+
+def check_bash(inp, cwd):
+    command = inp.get("command")
+    if not isinstance(command, str):
+        return
+    base = cwd
+    for line in strip_heredocs(command):
+        try:
+            segs = segments(line)
+        except ValueError:
+            continue
+        for stages in segs:
+            first, words = None, []
+            # A `cd` changes where later relative paths point.
+            w0, _ = split_redirects(stages[0])
+            if len(w0) >= 2 and w0[0] == "cd":
+                base = resolve(w0[1], base)
+                continue
+            last = stages[-1]
+            words, elsewhere = split_redirects(last)
+            while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0]):
+                words = words[1:]
+            if not words or elsewhere:
+                continue
+            first = os.path.basename(words[0])
+            if first in DUMPERS:
+                unbounded = True
+            elif first in ("head", "tail"):
+                n = count_arg(words)
+                unbounded = n is None or n > MAX_LIMIT
+            else:
+                continue
+            for f in file_args(words, first):
+                if f == "-" or os.path.splitext(f)[1].lower() in BINARY_EXT:
+                    continue
+                why = problem(f, resolve(f, base), unbounded)
+                if why:
+                    deny(why, f)
+
+
+def main():
+    if os.environ.get("ARANIKO_ROLE") != "worker":
+        return
+    try:
+        data = json.load(sys.stdin)
+        tool = data.get("tool_name")
+        inp = data.get("tool_input") or {}
+        cwd = data.get("cwd") or os.getcwd()
+        if not isinstance(inp, dict) or not isinstance(cwd, str):
+            return
+        if tool == "Read":
+            check_read(inp, cwd)
+        elif tool == "Bash":
+            check_bash(inp, cwd)
+    except SystemExit:
+        raise
+    except Exception:
+        return
+
+
+if __name__ == "__main__":
+    main()
+    sys.exit(0)
